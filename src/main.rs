@@ -1,3 +1,5 @@
 fn main() {
-    println!("Hello, world!");
+    let name = std::env::var("NAME").unwrap_or("world".to_string());
+
+    println!("Hello, {}!", name);
 }
