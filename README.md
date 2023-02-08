@@ -6,10 +6,10 @@ Each milestone will be its own branch on this repository, so basic `git` skills 
 
 ## Setup
 
-- [install rust](https://www.rust-lang.org/tools/install)
-- install vscode + [rust analyzer](https://www.rust-lang.org/tools/install) or clion + [rust plugin](https://plugins.jetbrains.com/plugin/8182-rust) (intellij works too, but I don't think it has debugging support)
-- clone this repo & execute `$ cargo run` in a terminal to check that your installation works. Then try setting the `NAME` environment variable and see what happens! 
-- later weeks will use [docker](https://www.docker.com/) for setup so you'll want to install this too unless you want to handle your postgres install manually (and that's a pain)
+- [Install rust](https://www.rust-lang.org/tools/install)
+- Install vscode + [rust analyzer](https://www.rust-lang.org/tools/install) or clion + [rust plugin](https://plugins.jetbrains.com/plugin/8182-rust) (intellij works too, but I don't think it has debugging support)
+- Clone this repo & execute `$ cargo run` in a terminal to check that your installation works. Then try setting the `NAME` environment variable and see what happens! 
+- Later weeks will use [docker](https://www.docker.com/) for setup so you'll want to install this too unless you want to handle your postgres install manually (and that's a pain)
 
 - Or use the setup github devcontainer! I don't know how well this will work with the `docker-compose` for the final section however 
 
