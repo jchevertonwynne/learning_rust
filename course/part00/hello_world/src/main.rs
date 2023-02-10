@@ -3,3 +3,9 @@ fn main() {
 
     println!("Hello, {}!", name);
 }
+
+fn sum_of_even() -> usize {
+    (1..=100)
+        .filter(|n| n % 2 == 0)
+        .sum()
+}
