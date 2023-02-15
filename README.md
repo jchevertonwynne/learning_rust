@@ -6,7 +6,11 @@ Each section will be its own subfolder within the `./course` folder, with its ow
 
 ## Aims
 
-- get gud
+- Get a overview of how rust works & the stdlib
+- Write some nice generic code
+- Use lifetimes to write code with 0 copies
+- Touch upon the basics of multithreading & async
+- Any other ideas? Please suggest and we'll see how things fit
 
 ## Setup
 
