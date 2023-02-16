@@ -2,3 +2,4 @@
 course/*/*/target
 rust-project.json
 Cargo.lock
+.idea
