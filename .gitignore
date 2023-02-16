@@ -1,5 +1,6 @@
 /target
 course/*/*/target
+course/*/*/Cargo.lock
 rust-project.json
 Cargo.lock
 .idea
