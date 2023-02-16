@@ -15,8 +15,10 @@ Each section will be its own subfolder within the `./course` folder, with its ow
 ## Setup
 
 - [Install rust](https://www.rust-lang.org/tools/install)
-- Install vscode + [rust analyzer](https://www.rust-lang.org/tools/install) or clion + [rust plugin](https://plugins.jetbrains.com/plugin/8182-rust) (intellij works too, but I don't think it has debugging support)
-- Clone this repo, `$ cd course/part00/hello_world` and execute `$ cargo run` in a terminal to check that your installation works. Then try setting the `NAME` environment variable and see what happens when re-running! 
+- Install vscode + [rust analyzer](https://www.rust-lang.org/tools/install) or clion + [rust plugin](https://plugins.jetbrains.com/plugin/8182-rust) (intellij works too, but I don't think it has debugging support).
+- Clone this repo.
+- Run `$ cargo install --path .` to install the `lrprepare` executable to your `PATH`. This enables rust-analyzer support for vscode from the base directory, simply rerun it whenever a new project subdirectory is created.
+- Run the hello world example through `$ cd course/part00/hello_world && cargo run` in a terminal to check that your installation works. Then try setting the `NAME` environment variable and see what happens when re-running `$ cargo run`! 
 
 ## Resources
 
