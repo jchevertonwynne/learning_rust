@@ -9,29 +9,34 @@ fn main() -> anyhow::Result<()> {
         anyhow::bail!("this must be ran from the learning_rust folder");
     }
 
+    let stdout = Command::new("cargo").arg("metadata").output()?.stdout;
+    let stdout = std::str::from_utf8(&stdout)?;
+
+    let metadata: Metadata = serde_json::from_str(stdout)?;
+
     let mut info = ProjectsInfo {
         sysroot_src: get_stdlib_path()?,
         crates: vec![
             Crate {
-                root_module: get_lib_source("anyhow")?,
+                root_module: get_lib_source("anyhow", &metadata)?,
                 edition: "2021".to_string(),
                 deps: vec![],
                 cfg: vec!["test".to_string()],
             },
             Crate {
-                root_module: get_lib_source("glob")?,
+                root_module: get_lib_source("glob", &metadata)?,
                 edition: "2021".to_string(),
                 deps: vec![],
                 cfg: vec!["test".to_string()],
             },
             Crate {
-                root_module: get_lib_source("serde")?,
+                root_module: get_lib_source("serde", &metadata)?,
                 edition: "2021".to_string(),
                 deps: vec![],
                 cfg: vec!["test".to_string()],
             },
             Crate {
-                root_module: get_lib_source("serde_json")?,
+                root_module: get_lib_source("serde_json", &metadata)?,
                 edition: "2021".to_string(),
                 deps: vec![],
                 cfg: vec!["test".to_string()],
@@ -79,9 +84,11 @@ fn main() -> anyhow::Result<()> {
 
     let json = serde_json::to_string_pretty(&info)?;
 
-    std::fs::write("rust-project.json", json)?;
-
-    // println!("{}", json);
+    if std::env::var("TEST").is_ok() {
+        println!("{}", json);
+    } else {
+        std::fs::write("rust-project.json", json)?;
+    }
 
     Ok(())
 }
@@ -108,12 +115,7 @@ fn get_stdlib_path() -> anyhow::Result<String> {
     Ok(stdlib_path)
 }
 
-fn get_lib_source(lib_name: &str) -> anyhow::Result<String> {
-    let stdout = Command::new("cargo").arg("metadata").output()?.stdout;
-    let stdout = std::str::from_utf8(&stdout)?;
-
-    let metadata: Metadata = serde_json::from_str(stdout)?;
-
+fn get_lib_source(lib_name: &str, metadata: &Metadata) -> anyhow::Result<String> {
     let lib_src = metadata
         .packages
         .iter()
@@ -121,8 +123,15 @@ fn get_lib_source(lib_name: &str) -> anyhow::Result<String> {
         .context(format!("failed to find package for lib {}", lib_name))?
         .targets
         .iter()
-        .find(|t| t.kind.contains(&String::from("lib")))
-        .map(|t| t.src_path.clone())
+        .find_map(|t| {
+            if t.kind.iter().any(|k| k == "lib") {
+                Some(t.src_path.clone())
+            } else {
+                None
+            }
+        })
+        // .find(|t| t.kind.contains(&String::from("lib")))
+        // .map(|t| t.src_path.clone())
         .context(format!("failed to find lib src for {}", lib_name))?;
     Ok(lib_src)
 }
