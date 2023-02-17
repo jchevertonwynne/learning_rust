@@ -62,7 +62,7 @@ fn main() -> anyhow::Result<()> {
         ],
     };
 
-    for file in glob::glob("course/*/*/*/main.rs")? {
+    for file in glob::glob("course/*/*/src/main.rs")? {
         let path = file?
             .as_os_str()
             .to_str()
