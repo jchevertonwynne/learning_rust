@@ -1,15 +1,5 @@
-[package]
-name = "learning_rust"
-version = "0.1.0"
-edition = "2021"
+[workspace]
 
-[[bin]]
-name = "lrprepare"
-path = "src/main.rs"
-
-[dependencies]
-anyhow = "1.0.69"
-cargo_toml = "0.15.1"
-glob = "0.3.1"
-serde = { version = "1.0.152", features = ["derive"] }
-serde_json = "1.0.93"
+members = [
+    "course/*/*"
+]
