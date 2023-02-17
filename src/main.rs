@@ -9,63 +9,37 @@ fn main() -> anyhow::Result<()> {
         anyhow::bail!("this must be ran from the learning_rust folder");
     }
 
-    let stdout = Command::new("cargo").arg("metadata").output()?.stdout;
-    let stdout = std::str::from_utf8(&stdout)?;
-
-    let metadata: Metadata = serde_json::from_str(stdout)?;
-
     let mut info = ProjectsInfo {
         sysroot_src: get_stdlib_path()?,
-        crates: vec![
-            Crate {
-                root_module: get_lib_source("anyhow", &metadata)?,
-                edition: "2021".to_string(),
-                deps: vec![],
-                cfg: vec!["test".to_string()],
-            },
-            Crate {
-                root_module: get_lib_source("glob", &metadata)?,
-                edition: "2021".to_string(),
-                deps: vec![],
-                cfg: vec!["test".to_string()],
-            },
-            Crate {
-                root_module: get_lib_source("serde", &metadata)?,
-                edition: "2021".to_string(),
-                deps: vec![],
-                cfg: vec!["test".to_string()],
-            },
-            Crate {
-                root_module: get_lib_source("serde_json", &metadata)?,
-                edition: "2021".to_string(),
-                deps: vec![],
-                cfg: vec!["test".to_string()],
-            },
-            Crate {
-                root_module: "src/main.rs".to_string(),
-                edition: "2021".to_string(),
-                deps: vec![
-                    CrateDep {
-                        crate_index: 0,
-                        name: "anyhow".to_string(),
-                    },
-                    CrateDep {
-                        crate_index: 1,
-                        name: "glob".to_string(),
-                    },
-                    CrateDep {
-                        crate_index: 2,
-                        name: "serde".to_string(),
-                    },
-                    CrateDep {
-                        crate_index: 3,
-                        name: "serde_json".to_string(),
-                    },
-                ],
-                cfg: vec!["test".to_string()],
-            },
-        ],
+        crates: vec![],
     };
+
+    let mut lrproject_info = Crate {
+        root_module: "src/main.rs".to_string(),
+        edition: "2021".to_string(),
+        deps: vec![],
+        cfg: vec!["test".to_string()],
+    };
+
+    let stdout = Command::new("cargo").arg("metadata").output()?.stdout;
+    let stdout = std::str::from_utf8(&stdout)?;
+    let metadata: Metadata = serde_json::from_str(stdout)?;
+    let manifest = cargo_toml::Manifest::from_slice(&std::fs::read("Cargo.toml")?)?;
+    for (i, (dep, _)) in manifest.dependencies.into_iter().enumerate() {
+        let lib_src = get_lib_source(&dep, &metadata)?;
+        info.crates.push(Crate {
+            root_module: lib_src,
+            edition: "2021".to_string(),
+            deps: vec![],
+            cfg: vec![],
+        });
+        lrproject_info.deps.push(CrateDep {
+            crate_index: i,
+            name: dep,
+        });
+    }
+
+    info.crates.push(lrproject_info);
 
     for file in glob::glob("course/*/*/src/main.rs")? {
         let path = file?
@@ -130,8 +104,6 @@ fn get_lib_source(lib_name: &str, metadata: &Metadata) -> anyhow::Result<String>
                 None
             }
         })
-        // .find(|t| t.kind.contains(&String::from("lib")))
-        // .map(|t| t.src_path.clone())
         .context(format!("failed to find lib src for {}", lib_name))?;
     Ok(lib_src)
 }
@@ -158,22 +130,18 @@ struct CrateDep {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Metadata {
     packages: Vec<Package>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Package {
     name: String,
     targets: Vec<Target>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Target {
     kind: Vec<String>,
-    #[serde(rename = "src_path")]
     src_path: String,
 }
