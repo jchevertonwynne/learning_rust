@@ -33,5 +33,6 @@ Each of these milestones is initially planned to be over a 2 week period, we'll 
 1. Rustlings up to quiz 1, TRPL book chapter 2 guessing game
 2. Rustlings up to quiz 2, Conway's Game of Life and/or floodit
 3. Rustlings up to quiz 3, generic trait based state machine solver
-4. Threads
-5. Basics of async + tokio
+4. Finish rustlings, some aoc question with 0 string copies
+5. Threads
+6. Basics of async + tokio
