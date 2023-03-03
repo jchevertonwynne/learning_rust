@@ -1,0 +1,38 @@
+[package]
+name = "myexamples"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.69"
+thiserror = "1.0.38"
+
+[[bin]]
+name = "errors"
+path = "src/errors.rs"
+
+[[bin]]
+name = "option"
+path = "src/option.rs"
+
+[[bin]]
+name = "result"
+path = "src/result.rs"
+
+[[bin]]
+name = "threading"
+path = "src/threading.rs"
+
+[[bin]]
+name = "sumofeven"
+path = "src/sum_of_even.rs"
+
+[[bin]]
+name = "hashmap"
+path = "src/hashmap.rs"
+
+[[bin]]
+name = "lifetimes"
+path = "src/lifetimes.rs"
