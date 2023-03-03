@@ -16,6 +16,8 @@ https://antoinerr.github.io/blog-website/2023/01/28/rust-anyhow.html
 
 https://fasterthanli.me/
 
+https://mmapped.blog/posts/12-rust-error-handling.html
+
 https://blog.cloudflare.com/how-we-built-pingora-the-proxy-that-connects-cloudflare-to-the-internet/
 
 https://blog.cloudflare.com/big-pineapple-intro/
