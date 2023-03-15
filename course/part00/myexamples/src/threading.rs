@@ -6,7 +6,7 @@ const REPEATS: usize = 1000;
 
 fn main() {
     let x = AtomicUsize::default();
-    
+
     std::thread::scope(|s| {
         for _ in 0..THREADS {
             s.spawn(|| {

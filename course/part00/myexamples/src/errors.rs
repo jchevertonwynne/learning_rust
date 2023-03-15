@@ -2,8 +2,7 @@ use std::num::ParseIntError;
 
 fn main() -> anyhow::Result<()> {
     let filename = std::env::args()
-        .skip(1)
-        .next()
+        .nth(1)
         .unwrap_or_else(|| "yolo".to_string());
 
     let int = int_from_file(&filename)?;
@@ -13,12 +12,12 @@ fn main() -> anyhow::Result<()> {
 
 fn int_from_file(filename: &str) -> Result<u64, ReadError> {
     let contents = std::fs::read_to_string(filename)?;
-    // let my_int = contents.parse()?;
+    let my_int = contents.parse()?;
 
-    let my_int =match contents.parse::<u64>() {
-        Ok(i) => i,
-        Err(err) => return Err(err.into()),
-    };
+    // let my_int = match contents.parse::<u64>() {
+    //     Ok(i) => i,
+    //     Err(err) => return Err(err.into()),
+    // };
 
     Ok(my_int)
 }
