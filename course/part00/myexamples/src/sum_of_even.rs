@@ -3,7 +3,5 @@ fn main() {
 }
 
 fn sum_of_even(start: u64, end: u64) -> u64 {
-    (start..=end)
-        .filter(|n| n % 2 == 0)
-        .sum()
+    (start..=end).filter(|n| n % 2 == 0).sum()
 }

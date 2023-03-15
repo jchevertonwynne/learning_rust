@@ -1,6 +1,6 @@
 fn main() {
     let a = "xyz";
-    
+
     {
         let b = "abc";
 
