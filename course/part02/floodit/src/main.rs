@@ -9,7 +9,7 @@ use rand::{distributions::Standard, prelude::Distribution};
 use Colour::*;
 
 fn main() -> anyhow::Result<()> {
-    let mut game = Game::<10, 10>::new();
+    let mut game = Game::new();
     println!("{}", game);
 
     loop {
@@ -21,12 +21,11 @@ fn main() -> anyhow::Result<()> {
             continue;
         };
 
-        game.iterate(chosen);
+        game.apply(chosen);
+        println!("{}", game);
         if game.won() {
             break;
         }
-
-        println!("{}", game);
     }
 
     println!("you won in {} turns!", game.turns);
@@ -49,13 +48,13 @@ fn prompt_string() -> String {
     )
 }
 
-struct Game<const X: usize, const Y: usize> {
-    board: [[Colour; X]; Y],
+struct Game{
+    board: [[Colour; 10]; 10],
     turns: usize,
 }
 
-impl<const X: usize, const Y: usize> Game<X, Y> {
-    fn new() -> Game<X, Y> {
+impl Game {
+    fn new() -> Game {
         Game {
             board: std::array::from_fn(|_| std::array::from_fn(|_| rand::random())),
             turns: 0,
@@ -63,28 +62,28 @@ impl<const X: usize, const Y: usize> Game<X, Y> {
     }
 
     // takes a colour and applies it to the board
-    fn iterate(&mut self, new_colour: Colour) {
+    fn apply(&mut self, new_colour: Colour) {
         let curr_colour = self.board[0][0];
         if curr_colour == new_colour {
             return;
         }
-        self._iterate(curr_colour, new_colour, 0, 0);
+        self._apply(curr_colour, new_colour, 0, 0);
         self.turns += 1;
     }
 
-    fn _iterate(&mut self, curr_colour: Colour, new_colour: Colour, x: usize, y: usize) {
+    fn _apply(&mut self, curr_colour: Colour, new_colour: Colour, x: usize, y: usize) {
         self.board[y][x] = new_colour;
         if x >= 1 && self.board[y][x - 1] == curr_colour {
-            self._iterate(curr_colour, new_colour, x - 1, y);
+            self._apply(curr_colour, new_colour, x - 1, y);
         }
         if x + 1 < self.board[0].len() && self.board[y][x + 1] == curr_colour {
-            self._iterate(curr_colour, new_colour, x + 1, y);
+            self._apply(curr_colour, new_colour, x + 1, y);
         }
         if y >= 1 && self.board[y - 1][x] == curr_colour {
-            self._iterate(curr_colour, new_colour, x, y - 1);
+            self._apply(curr_colour, new_colour, x, y - 1);
         }
         if y + 1 < self.board.len() && self.board[y + 1][x] == curr_colour {
-            self._iterate(curr_colour, new_colour, x, y + 1);
+            self._apply(curr_colour, new_colour, x, y + 1);
         }
     }
 
@@ -98,7 +97,7 @@ impl<const X: usize, const Y: usize> Game<X, Y> {
     }
 }
 
-impl<const X: usize, const Y: usize> Display for Game<X, Y> {
+impl Display for Game {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "turns: {}", self.turns)?;
         for row in self.board.iter() {
