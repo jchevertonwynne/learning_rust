@@ -32,7 +32,7 @@ Each of these milestones is initially planned to be over a 2 week period, we'll 
 0. Kickoff giving an introduction to what makes Rust interesting
 1. Rustlings up to quiz 1, TRPL book chapter 2 guessing game
 2. Rustlings up to quiz 2, Conway's Game of Life and/or floodit
-3. Rustlings up to quiz 3, generic trait based state machine solver
+3. Rustlings up to quiz 3, binary search tree with generics
 4. Finish rustlings, some aoc question with 0 string copies
 5. Threads
 6. Basics of async + tokio
