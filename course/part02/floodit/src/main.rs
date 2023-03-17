@@ -60,37 +60,12 @@ impl Game {
 
     // takes a colour and applies it to the board
     fn apply(&mut self, new_colour: Colour) {
-        let curr_colour = self.board[0][0];
-        if curr_colour == new_colour {
-            return;
-        }
-        self._apply(curr_colour, new_colour, 0, 0);
-        self.turns += 1;
-    }
-
-    fn _apply(&mut self, curr_colour: Colour, new_colour: Colour, x: usize, y: usize) {
-        self.board[y][x] = new_colour;
-        if x >= 1 && self.board[y][x - 1] == curr_colour {
-            self._apply(curr_colour, new_colour, x - 1, y);
-        }
-        if x + 1 < self.board[0].len() && self.board[y][x + 1] == curr_colour {
-            self._apply(curr_colour, new_colour, x + 1, y);
-        }
-        if y >= 1 && self.board[y - 1][x] == curr_colour {
-            self._apply(curr_colour, new_colour, x, y - 1);
-        }
-        if y + 1 < self.board.len() && self.board[y + 1][x] == curr_colour {
-            self._apply(curr_colour, new_colour, x, y + 1);
-        }
+        todo!("please fill me in!")
     }
 
     // returns true if all tiles are the same colour
     fn won(&self) -> bool {
-        let owned = self.board[0][0];
-        self.board
-            .iter()
-            .flat_map(|row| row.iter())
-            .all(|cell| *cell == owned)
+        todo!("please fill me in!")
     }
 }
 
