@@ -113,12 +113,12 @@ impl FromStr for Colour {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let colour = match s {
-            "r" | "red" => Red,
-            "g" | "green" => Green,
-            "b" | "blue" => Blue,
-            "p" | "purple" => Purple,
-            "w" | "white" => White,
-            "y" | "yellow" => Yellow,
+            "red" => Red,
+            "green" => Green,
+            "blue" => Blue,
+            "purple" => Purple,
+            "white" => White,
+            "yellow" => Yellow,
             _ => return Err(InvalidColourError),
         };
         Ok(colour)
