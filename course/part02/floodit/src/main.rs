@@ -35,10 +35,7 @@ fn main() -> anyhow::Result<()> {
 
 fn prompt_string() -> String {
     let colours: Vec<_> = enum_iterator::all::<Colour>()
-        .map(|c| {
-            let s = format!("{c:?}");
-            format!("'({}){}'", &s[..1], &s[1..])
-        })
+        .map(|c| format!("{c:?}"))
         .collect();
 
     format!(
