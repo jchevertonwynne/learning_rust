@@ -12,6 +12,8 @@ https://github.com/near/nearcore/blob/b72c9a149349a4e56dc909488541b8366d37c792/d
 
 https://antoinerr.github.io/blog-website/2023/01/28/rust-anyhow.html
 
+https://github.com/pretzelhammer/rust-blog/blob/master/posts/tour-of-rusts-standard-library-traits.md
+
 ## Blogs
 
 https://fasterthanli.me/
