@@ -9,7 +9,7 @@ use rand::{distributions::Standard, prelude::Distribution};
 use Colour::*;
 
 fn main() -> anyhow::Result<()> {
-    let mut game = Game::new();
+    let mut game = Game::<10, 10>::new();
     println!("{}", game);
 
     loop {
@@ -21,11 +21,12 @@ fn main() -> anyhow::Result<()> {
             continue;
         };
 
-        game.apply(chosen);
-        println!("{}", game);
+        game.iterate(chosen);
         if game.won() {
             break;
         }
+
+        println!("{}", game);
     }
 
     println!("you won in {} turns!", game.turns);
@@ -35,7 +36,10 @@ fn main() -> anyhow::Result<()> {
 
 fn prompt_string() -> String {
     let colours: Vec<_> = enum_iterator::all::<Colour>()
-        .map(|c| format!("{c:?}"))
+        .map(|c| {
+            let s = format!("{c:?}");
+            format!("'({}){}'", &s[..1], &s[1..])
+        })
         .collect();
 
     format!(
@@ -45,13 +49,13 @@ fn prompt_string() -> String {
     )
 }
 
-struct Game{
-    board: [[Colour; 10]; 10],
+struct Game<const X: usize, const Y: usize> {
+    board: [[Colour; X]; Y],
     turns: usize,
 }
 
-impl Game {
-    fn new() -> Game {
+impl<const X: usize, const Y: usize> Game<X, Y> {
+    fn new() -> Game<X, Y> {
         Game {
             board: std::array::from_fn(|_| std::array::from_fn(|_| rand::random())),
             turns: 0,
@@ -59,17 +63,42 @@ impl Game {
     }
 
     // takes a colour and applies it to the board
-    fn apply(&mut self, new_colour: Colour) {
-        todo!("please fill me in!")
+    fn iterate(&mut self, new_colour: Colour) {
+        let curr_colour = self.board[0][0];
+        if curr_colour == new_colour {
+            return;
+        }
+        self._iterate(curr_colour, new_colour, 0, 0);
+        self.turns += 1;
+    }
+
+    fn _iterate(&mut self, curr_colour: Colour, new_colour: Colour, x: usize, y: usize) {
+        self.board[y][x] = new_colour;
+        if x >= 1 && self.board[y][x - 1] == curr_colour {
+            self._iterate(curr_colour, new_colour, x - 1, y);
+        }
+        if x + 1 < self.board[0].len() && self.board[y][x + 1] == curr_colour {
+            self._iterate(curr_colour, new_colour, x + 1, y);
+        }
+        if y >= 1 && self.board[y - 1][x] == curr_colour {
+            self._iterate(curr_colour, new_colour, x, y - 1);
+        }
+        if y + 1 < self.board.len() && self.board[y + 1][x] == curr_colour {
+            self._iterate(curr_colour, new_colour, x, y + 1);
+        }
     }
 
     // returns true if all tiles are the same colour
     fn won(&self) -> bool {
-        todo!("please fill me in!")
+        let owned = self.board[0][0];
+        self.board
+            .iter()
+            .flat_map(|row| row.iter())
+            .all(|cell| *cell == owned)
     }
 }
 
-impl Display for Game {
+impl<const X: usize, const Y: usize> Display for Game<X, Y> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "turns: {}", self.turns)?;
         for row in self.board.iter() {
@@ -113,12 +142,12 @@ impl FromStr for Colour {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let colour = match s {
-            "red" => Red,
-            "green" => Green,
-            "blue" => Blue,
-            "purple" => Purple,
-            "white" => White,
-            "yellow" => Yellow,
+            "r" | "red" => Red,
+            "g" | "green" => Green,
+            "b" | "blue" => Blue,
+            "p" | "purple" => Purple,
+            "w" | "white" => White,
+            "y" | "yellow" => Yellow,
             _ => return Err(InvalidColourError),
         };
         Ok(colour)
