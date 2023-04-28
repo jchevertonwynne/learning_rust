@@ -11,8 +11,8 @@ impl BagItem {
         let line = line.replace(" bags", "");
         let line = line.replace(" bag", "");
 
-        let space_separater = String::from(" ");
-        let parts = line.split(&space_separater)
+        let space_separator = String::from(" ");
+        let parts = line.split(&space_separator)
             .map(|part| part.to_string())
             .collect::<Vec<_>>();
 
@@ -20,7 +20,7 @@ impl BagItem {
         let bag_color_first = parts.get(1).unwrap().clone();
         let bag_color_second = parts.get(2).unwrap().clone();
         let bag_color = format!("{bag_color_first} {bag_color_second}");
-        return BagItem{bag_color, count: bag_count};
+        BagItem{bag_color, count: bag_count}
     }
 }
 
@@ -30,6 +30,7 @@ pub struct BagRule {
     contains: Option<Vec<BagItem>>,
 }
 
+#[allow(clippy::cmp_owned)]
 impl BagRule {
     fn new(line: String) -> Self {
         // Split the line into the bag color and the contents
@@ -62,12 +63,12 @@ impl BagRule {
             .map(|item_string| BagItem::new(item_string.to_string()))
             .collect();
 
-        return BagRule{bag_color,contains: Some(bag_items)};
+        BagRule{bag_color,contains: Some(bag_items)}
     }
 }
 
 pub fn parse_input(data: &str) -> Vec<BagRule> {
-    data.clone().lines()
+    data.to_string().lines()
         .map(|line| BagRule::new(line.to_string()))
         .collect::<Vec<_>>()
 }
@@ -121,7 +122,7 @@ pub fn run_calc() -> (usize, i32) {
     const SHINY_GOLD_BAG: &str = "shiny gold";
     let colors = bag_colors_contain(&lookup_inside,  SHINY_GOLD_BAG.to_string());
     let bags_inside = count_bags_inside(&lookup_contains, "shiny gold".to_string());
-    return (colors.len(), bags_inside);
+    (colors.len(), bags_inside)
 }
 
 #[cfg(test)]
