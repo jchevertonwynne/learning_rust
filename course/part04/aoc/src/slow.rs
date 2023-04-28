@@ -52,7 +52,7 @@ impl BagRule {
             return BagRule {bag_color, contains: None};
         }
 
-        // Split the contents each content type, seperated by commas
+        // Split the contents each content type, separated by commas
         let comma_separator = String::from(", ");
         let bag_items = bag_contents_string
             .split(&comma_separator)

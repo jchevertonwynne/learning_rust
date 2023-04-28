@@ -24,6 +24,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore]   // TODO: Remove when you have implemented the fast version
     fn test_run_calc() {
         let result = run_calc();
         assert_eq!(result, (222, 13264));
