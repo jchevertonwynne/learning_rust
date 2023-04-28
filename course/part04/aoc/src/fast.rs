@@ -106,3 +106,14 @@ pub fn run_calc() -> (usize, i32) {
     // let bags_inside = count_bags_inside(&lookup_contains, "shiny gold".to_string());
     // return (colors.len(), bags_inside);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_run_calc() {
+        let result = run_calc();
+        assert_eq!(result, (222, 13264));
+    }
+}

@@ -124,3 +124,14 @@ pub fn run_calc() -> (usize, i32) {
     return (colors.len(), bags_inside);
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_run_calc() {
+        let result = run_calc();
+        assert_eq!(result, (222, 13264));
+    }
+}
+
