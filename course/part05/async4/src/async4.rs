@@ -25,6 +25,9 @@ async fn main() -> anyhow::Result<()> {
         cards = draw_cards(&client, deck_id, 3) => {
             println!("branch 2 hit!\n{cards:#?}")
         }
+        _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+            println!("hit timeout before any response happened :(")
+        }
     }
 
     // linearly
