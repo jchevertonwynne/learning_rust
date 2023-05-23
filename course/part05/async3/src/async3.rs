@@ -1,28 +1,35 @@
 // the tokio::main macro
 
+use std::future::Future;
+
 #[tokio::main]
 // #[tokio::main(flavor = "current_thread")]
 async fn main() {
     hello_world().await;
+    hello_world_2().await;
 }
 
 async fn hello_world() {
     println!("hello world!");
 }
 
+fn hello_world_2() -> impl Future<Output = ()> {
+    async {
+        println!("hello world 2!");
+    }
+}
+
+    // println!("about to await on sleepable");
+    // MySleepable::new(Duration::from_secs(1)).await;
+    // println!("done!");
+
+    // println!("about to await on tokio::time::sleep");
+    // tokio::time::sleep(Duration::from_secs(1)).await;
+    // println!("done!");
 
 
-// println!("about to await on sleepable");
-// MySleepable::new(Duration::from_secs(1)).await;
-// println!("done!");
 
-// println!("about to await on tokio::time::sleep");
-// tokio::time::sleep(Duration::from_secs(1)).await;
-// println!("done!");
-
-
-
-// use std::{future::Future, ops::Add, task::Poll, time::Duration};
+// use std::{ops::Add, task::Poll, time::Duration};
 
 // struct MySleepable(std::time::Instant);
 
@@ -39,6 +46,8 @@ async fn hello_world() {
 //         self: std::pin::Pin<&mut Self>,
 //         cx: &mut std::task::Context<'_>,
 //     ) -> std::task::Poll<Self::Output> {
+//         println!("polling MyFuture...");
+
 //         let now = std::time::Instant::now();
 //         if now >= self.0 {
 //             return Poll::Ready(());
@@ -51,6 +60,6 @@ async fn hello_world() {
 //             waker.wake();
 //         });
 
-// Poll::Pending
+//         Poll::Pending
 //     }
 // }

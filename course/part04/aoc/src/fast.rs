@@ -1,6 +1,3 @@
-
-
-
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
 pub struct BagItem<'a> {
     bag_color: &'a str,
@@ -9,7 +6,7 @@ pub struct BagItem<'a> {
 
 pub fn run_calc() -> (usize, i32) {
     todo!("Implement the fast version of the code and enable the fast run in the benchmarks to compare");
-    
+
     // let data = include_str!("../src/data/input.txt");
     // let rules = parse_input(data);
     // let (lookup_inside, lookup_contains) = generate_lookups(rules);
@@ -24,7 +21,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore]   // TODO: Remove when you have implemented the fast version
+    #[ignore] // TODO: Remove when you have implemented the fast version
     fn test_run_calc() {
         let result = run_calc();
         assert_eq!(result, (222, 13264));

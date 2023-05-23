@@ -1,13 +1,11 @@
 #![allow(dead_code, unused_imports)]
 
-use std::{
-    fmt::{Debug, Display},
-    future::Future,
-    sync::Arc, time::Duration,
-};
+use std::{fmt::{Debug, Display}, future::Future, pin::pin, sync::Arc, time::Duration};
+use std::fmt::Formatter;
 
 use anyhow::Context;
 use reqwest::{Client, ClientBuilder};
+use tokio::select;
 use url::Url;
 
 // http requests + awaiting multiple tasks
@@ -16,44 +14,51 @@ use url::Url;
 async fn main() -> anyhow::Result<()> {
     let client = ClientBuilder::new().build()?;
 
-    let deck_id = new_deck(&client).await?;
+    let deck_id = new_deck(client.clone()).await?;
 
     // linearly
-    let cards1 = draw_cards(&client, deck_id, 2).await?;
-    let cards2 = draw_cards(&client, deck_id, 3).await?;
+    let drawn_cards1 = draw_cards(client.clone(), deck_id, 2).await?;
+    let drawn_cards2 = draw_cards(client.clone(), deck_id, 3).await?;
 
     // concurrently, same task
-    // let cards1 = draw_cards(&client, &deck_id, 2);
-    // let cards2 = draw_cards(&client, &deck_id, 3);
-    // let (cards1, cards2) = tokio::try_join!(cards1, cards2)?;
-    // let (cards1_res, cards2_res) = tokio::join!(cards1, cards2);
-    // let cards1 = cards1_res?;
-    // let cards2 = cards2_res?;
+    // let drawn_cards1 = draw_cards(client.clone(), deck_id, 2);
+    // let drawn_cards2 = draw_cards(client.clone(), deck_id, 3);
+    // let (drawn_cards1, drawn_cards2) = tokio::try_join!(drawn_cards1, drawn_cards2)?;
+    // let (cards1_res, cards2_res) = tokio::join!(drawn_cards1, drawn_cards2);
+    // let drawn_cards1 = cards1_res?;
+    // let drawn_cards2 = cards2_res?;
 
     // concurrently, different tasks
-    // let cards1 = draw_cards(&client, &deck_id, 2);
-    // let cards2 = draw_cards(&client, &deck_id, 3);
+    // let drawn_cards1 = draw_cards(client.clone(), deck_id, 2);
+    // let drawn_cards2 = draw_cards(client.clone(), deck_id, 3);
     // let (cards1_res, cards2_res) =
-    //     tokio::try_join!(tokio::spawn(cards1), tokio::spawn(cards2)).context("a task panicked")?;
-    // let cards1 = cards1_res?;
-    // let cards2 = cards2_res?;
+    //     tokio::try_join!(tokio::spawn(drawn_cards1), tokio::spawn(drawn_cards2)).context("a task panicked")?;
+    // let drawn_cards1 = cards1_res?;
+    // let drawn_cards2 = cards2_res?;
 
-    println!("cards1: {:#?}\n\ncards2: {:#?}", cards1, cards2);
+    println!("total retrieved cards :{}", drawn_cards1.cards.len() + drawn_cards2.cards.len());
 
-    let pretty = toml::to_string_pretty(&cards1).unwrap();
+    let pretty = toml::to_string_pretty(&drawn_cards1).unwrap();
 
     println!("{pretty}");
 
-
     /* selecting on futures */
 
+    select! {
+        drawn_cards = draw_cards(client.clone(), deck_id, 4) => {
+            println!("selected cards: {:#?}", drawn_cards?.cards);
+        },
+        _ = tokio::time::sleep(Duration::from_secs(1)) => {
+            println!("timeout in select hit");
+        }
+    }
 
-    let mut cards = std::pin::pin!(draw_cards(&client, deck_id, 2));
+    let mut cards = pin!(draw_cards(client.clone(), deck_id, 2));
     let mut ticker = tokio::time::interval(Duration::from_millis(10));
-    let cards = loop {
-        tokio::select! {
-            cards = cards.as_mut() => {
-                break cards;
+    let drawn_cards: DrawnCardsInfo = loop {
+        select! {
+            drawn_cards = cards.as_mut() => {
+                break drawn_cards;
             }
             _ = ticker.tick() => {
                 println!("i am still waiting...");
@@ -61,14 +66,14 @@ async fn main() -> anyhow::Result<()> {
         }
     }?;
 
-    println!("selected cards: {:#?}", cards.deck_id);
+    println!("cards from looped select: {:#?}", drawn_cards.cards);
 
     // select futures must be safe to only partially poll - .writeAll isn't
 
     Ok(())
 }
 
-async fn new_deck(client: &Client) -> Result<DeckID, reqwest::Error> {
+async fn new_deck(client: Client) -> Result<DeckID, reqwest::Error> {
     let deck_info: DeckInfo = client
         .get("https://deckofcardsapi.com/api/deck/new/shuffle/?deck_count=1")
         .send()
@@ -83,7 +88,7 @@ async fn new_deck(client: &Client) -> Result<DeckID, reqwest::Error> {
 // this function runs its first part sync, then returns an async block
 // this is useful especially when there's some immediately failable setup
 fn draw_cards(
-    client: &Client,
+    client: Client,
     deck_id: DeckID,
     n: u8,
 ) -> impl Future<Output = Result<DrawnCardsInfo, reqwest::Error>> {
@@ -100,13 +105,13 @@ fn draw_cards(
 struct DeckID([u8; 12]);
 
 impl Debug for DeckID {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "DeckID({})", self.as_ref())
     }
 }
 
 impl Display for DeckID {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_ref())
     }
 }
@@ -120,8 +125,8 @@ impl AsRef<str> for DeckID {
 
 impl serde::ser::Serialize for DeckID {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: serde::Serializer,
+    where
+        S: serde::Serializer,
     {
         serializer.serialize_str(self.as_ref())
     }
@@ -129,21 +134,21 @@ impl serde::ser::Serialize for DeckID {
 
 impl<'de> serde::Deserialize<'de> for DeckID {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where
-            D: serde::Deserializer<'de>,
+    where
+        D: serde::Deserializer<'de>,
     {
         struct DeckIDVisitor;
 
         impl<'vi> serde::de::Visitor<'vi> for DeckIDVisitor {
             type Value = DeckID;
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
                 write!(formatter, "a 12 char ascii string representing an ID")
             }
 
             fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-                where
-                    E: serde::de::Error,
+            where
+                E: serde::de::Error,
             {
                 if !v.is_ascii() {
                     return Err(serde::de::Error::invalid_value(
@@ -212,8 +217,8 @@ struct Code {
 // a manual implementation of Serialize that serializes to a 2 char string
 impl serde::ser::Serialize for Code {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: serde::Serializer,
+    where
+        S: serde::Serializer,
     {
         let value = match self.value {
             Value::Ace => b'A',
@@ -245,21 +250,21 @@ impl serde::ser::Serialize for Code {
 // a manual implementation of Deserialize that deserializes from a 2 char string to a struct of enums
 impl<'de> serde::Deserialize<'de> for Code {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where
-            D: serde::Deserializer<'de>,
+    where
+        D: serde::Deserializer<'de>,
     {
         struct CodeVisitor;
 
         impl<'vi> serde::de::Visitor<'vi> for CodeVisitor {
             type Value = Code;
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
                 write!(formatter, "a string of 2 chars representing a card")
             }
 
             fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-                where
-                    E: serde::de::Error,
+            where
+                E: serde::de::Error,
             {
                 let mut chars = v.chars();
 

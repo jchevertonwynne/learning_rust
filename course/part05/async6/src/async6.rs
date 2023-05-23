@@ -9,7 +9,7 @@ const TASKS: usize = 10;
 
 // don't block the executor!
 // getting from .await to .await should be fast
-// try changing the tasks count from 10 to see what happens to the blocking run's duration
+// try changing the tasks count from your CPU core count to count+1 to see what happens to the blocking run's duration
 // then try using tokio::task::spawn_blocking to alleviate this pressure from my_task1
 fn main() {
     let thread_handle = std::thread::spawn(|| runner("std::thread::sleep", my_task1));
@@ -26,7 +26,9 @@ fn runner<F: Fn() -> Fut, Fut: Future<Output = ()> + Send + 'static>(name: &str,
         .build()
         .expect("failed to build runtime")
         .block_on(async {
-            let handles = (0..TASKS).map(|_| tokio::spawn(f())).collect::<Vec<_>>();
+            let handles = (0..num_cpus::get())
+                .map(|_| tokio::spawn(f()))
+                .collect::<Vec<_>>();
 
             for handle in handles {
                 handle.await.unwrap();
