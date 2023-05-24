@@ -1,12 +1,13 @@
 // the tokio::main macro
 
-use std::future::Future;
+use std::{future::Future, time::Duration};
 
 #[tokio::main]
 // #[tokio::main(flavor = "current_thread")]
 async fn main() {
     hello_world().await;
     hello_world_2().await;
+    self_referential(tokio::time::sleep(Duration::from_secs(1))).await;
 }
 
 async fn hello_world() {
@@ -17,6 +18,13 @@ fn hello_world_2() -> impl Future<Output = ()> {
     async {
         println!("hello world 2!");
     }
+}
+
+async fn self_referential(awaitable: impl Future<Output=()>) {
+    let x = [1, 2, 3];
+    let y = &x;
+    awaitable.await;
+    println!("{y:?}")
 }
 
     // println!("about to await on sleepable");
