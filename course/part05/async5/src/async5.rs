@@ -14,66 +14,62 @@ use url::Url;
 async fn main() -> anyhow::Result<()> {
     let client = ClientBuilder::new().build()?;
 
-    let deck_id = new_deck(client.clone()).await?;
+    let deck_info = new_deck(client.clone()).await?;
+    let deck_id = deck_info.deck_id;
 
     // linearly
-    let drawn_cards1 = draw_cards(client.clone(), deck_id, 2).await?;
-    let drawn_cards2 = draw_cards(client.clone(), deck_id, 3).await?;
+    let drawn_cards1 = draw_cards(client.clone(), deck_id, 2)?.await?;
+    let drawn_cards2 = draw_cards(client.clone(), deck_id, 3)?.await?;
+
+    // concurrently (and maybe parallel!), different tasks
+    // let drawn_cards1_handle = tokio::spawn(draw_cards(client.clone(), deck_id, 2)?);
+    // let drawn_cards2_handle = tokio::spawn(draw_cards(client.clone(), deck_id, 3)?);
+    // let drawn_cards1 = drawn_cards1_handle.await??;
+    // let drawn_cards2 = drawn_cards2_handle.await??;
 
     // concurrently, same task
-    // let drawn_cards1 = draw_cards(client.clone(), deck_id, 2);
-    // let drawn_cards2 = draw_cards(client.clone(), deck_id, 3);
+    // let drawn_cards1 = draw_cards(client.clone(), deck_id, 2)?;
+    // let drawn_cards2 = draw_cards(client.clone(), deck_id, 3)?;
     // let (drawn_cards1, drawn_cards2) = tokio::try_join!(drawn_cards1, drawn_cards2)?;
-    // let (cards1_res, cards2_res) = tokio::join!(drawn_cards1, drawn_cards2);
-    // let drawn_cards1 = cards1_res?;
-    // let drawn_cards2 = cards2_res?;
 
-    // concurrently, different tasks
-    // let drawn_cards1 = draw_cards(client.clone(), deck_id, 2);
-    // let drawn_cards2 = draw_cards(client.clone(), deck_id, 3);
-    // let (cards1_res, cards2_res) =
-    //     tokio::try_join!(tokio::spawn(drawn_cards1), tokio::spawn(drawn_cards2)).context("a task panicked")?;
-    // let drawn_cards1 = cards1_res?;
-    // let drawn_cards2 = cards2_res?;
-
-    println!("total retrieved cards :{}", drawn_cards1.cards.len() + drawn_cards2.cards.len());
+    println!("total retrieved cards: {}", drawn_cards1.cards.len() + drawn_cards2.cards.len());
 
     let pretty = toml::to_string_pretty(&drawn_cards1).unwrap();
 
-    println!("{pretty}");
+    println!("===== toml output of drawn_cards1: ======\n{pretty}");
 
     /* selecting on futures */
 
-    select! {
-        drawn_cards = draw_cards(client.clone(), deck_id, 4) => {
-            println!("selected cards: {:#?}", drawn_cards?.cards);
-        },
-        _ = tokio::time::sleep(Duration::from_secs(1)) => {
-            println!("timeout in select hit");
-        }
-    }
+    // select! {
+    //     drawn_cards = draw_cards(client.clone(), deck_id, 4)? => {
+    //         println!("selected cards: {:#?}", drawn_cards?.cards);
+    //     },
+    //     _ = tokio::time::sleep(Duration::from_secs(1)) => {
+    //         println!("timeout in select hit");
+    //     }
+    // }
 
-    let mut cards = pin!(draw_cards(client.clone(), deck_id, 2));
-    let mut ticker = tokio::time::interval(Duration::from_millis(10));
-    let drawn_cards: DrawnCardsInfo = loop {
-        select! {
-            drawn_cards = cards.as_mut() => {
-                break drawn_cards;
-            }
-            _ = ticker.tick() => {
-                println!("i am still waiting...");
-            }
-        }
-    }?;
+    // let mut cards = pin!(draw_cards(client.clone(), deck_id, 2)?);
+    // let mut ticker = tokio::time::interval(Duration::from_millis(10));
+    // let drawn_cards: DrawnCardsInfo = loop {
+    //     select! {
+    //         drawn_cards = cards.as_mut() => {
+    //             break drawn_cards;
+    //         }
+    //         _ = ticker.tick() => {
+    //             println!("i am still waiting...");
+    //         }
+    //     }
+    // }?;
 
-    println!("cards from looped select: {:#?}", drawn_cards.cards);
+    // println!("cards from looped select: {:#?}", drawn_cards.cards);
 
     // select futures must be safe to only partially poll - .writeAll isn't
 
     Ok(())
 }
 
-async fn new_deck(client: Client) -> Result<DeckID, reqwest::Error> {
+async fn new_deck(client: Client) -> Result<DeckInfo, reqwest::Error> {
     let deck_info: DeckInfo = client
         .get("https://deckofcardsapi.com/api/deck/new/shuffle/?deck_count=1")
         .send()
@@ -82,7 +78,7 @@ async fn new_deck(client: Client) -> Result<DeckID, reqwest::Error> {
         .json()
         .await?;
 
-    Ok(deck_info.deck_id)
+    Ok(deck_info)
 }
 
 // this function runs its first part sync, then returns an async block
@@ -91,15 +87,29 @@ fn draw_cards(
     client: Client,
     deck_id: DeckID,
     n: u8,
-) -> impl Future<Output = Result<DrawnCardsInfo, reqwest::Error>> {
+) -> Result<impl Future<Output = Result<DrawnCardsInfo, reqwest::Error>>, CantBeZeroError> {
+    if n == 0 {
+        return Err(CantBeZeroError);
+    }
     let req = client
         .get(format!(
             "https://deckofcardsapi.com/api/deck/{deck_id}/draw/?count={n}"
         ))
         .send();
 
-    async move { req.await?.json().await }
+    Ok(async move { req.await?.json().await })
 }
+
+#[derive(Debug)]
+struct CantBeZeroError;
+
+impl Display for CantBeZeroError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "cards retrieved can't be zero")
+    }
+}
+
+impl std::error::Error for CantBeZeroError {}
 
 #[derive(Copy, Clone)]
 struct DeckID([u8; 12]);

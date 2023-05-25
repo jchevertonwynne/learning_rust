@@ -1,6 +1,8 @@
 // the tokio::main macro
 
 use std::{future::Future, time::Duration};
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 #[tokio::main]
 // #[tokio::main(flavor = "current_thread")]
@@ -8,6 +10,7 @@ async fn main() {
     hello_world().await;
     hello_world_2().await;
     self_referential(tokio::time::sleep(Duration::from_secs(1))).await;
+    BadFuture {count: 0}.await;
 }
 
 async fn hello_world() {
@@ -25,6 +28,25 @@ async fn self_referential(awaitable: impl Future<Output=()>) {
     let y = &x;
     awaitable.await;
     println!("{y:?}")
+}
+
+struct BadFuture {
+    count: usize
+}
+
+impl Future for BadFuture {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        println!("polling: {}", self.count);
+        if self.count == 5 {
+            Poll::Ready(())
+        } else {
+            self.count += 1;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    }
 }
 
     // println!("about to await on sleepable");
