@@ -1,2 +1,2 @@
-pub mod slow;
 pub mod fast;
+pub mod slow;

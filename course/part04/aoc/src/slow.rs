@@ -1,4 +1,6 @@
-use std::{collections::{HashMap, HashSet}};
+#![allow(clippy::redundant_closure)]
+
+use std::collections::{HashMap, HashSet};
 
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
 pub struct BagItem {
@@ -12,7 +14,8 @@ impl BagItem {
         let line = line.replace(" bag", "");
 
         let space_separator = String::from(" ");
-        let parts = line.split(&space_separator)
+        let parts = line
+            .split(&space_separator)
             .map(|part| part.to_string())
             .collect::<Vec<_>>();
 
@@ -20,7 +23,10 @@ impl BagItem {
         let bag_color_first = parts.get(1).unwrap().clone();
         let bag_color_second = parts.get(2).unwrap().clone();
         let bag_color = format!("{bag_color_first} {bag_color_second}");
-        BagItem{bag_color, count: bag_count}
+        BagItem {
+            bag_color,
+            count: bag_count,
+        }
     }
 }
 
@@ -45,11 +51,16 @@ impl BagRule {
 
         // Remove dot from the end
         let dot_matcher = String::from(".");
-        let bag_contents_string = bag_contents_string.trim_end_matches(&dot_matcher).to_string();
+        let bag_contents_string = bag_contents_string
+            .trim_end_matches(&dot_matcher)
+            .to_string();
 
         // Return if there is no other bags inside
         if bag_contents_string == String::from("no other bags") {
-            return BagRule {bag_color, contains: None};
+            return BagRule {
+                bag_color,
+                contains: None,
+            };
         }
 
         // Split the contents each content type, separated by commas
@@ -59,21 +70,31 @@ impl BagRule {
             .map(|content| content.to_string())
             .collect::<Vec<_>>();
 
-        let bag_items = bag_items.iter()
+        let bag_items = bag_items
+            .iter()
             .map(|item_string| BagItem::new(item_string.to_string()))
             .collect();
 
-        BagRule{bag_color,contains: Some(bag_items)}
+        BagRule {
+            bag_color,
+            contains: Some(bag_items),
+        }
     }
 }
 
 pub fn parse_input(data: &str) -> Vec<BagRule> {
-    data.to_string().lines()
+    data.to_string()
+        .lines()
         .map(|line| BagRule::new(line.to_string()))
         .collect::<Vec<_>>()
 }
 
-pub fn generate_lookups(rules: Vec<BagRule>) -> (HashMap<String, HashSet<String>>, HashMap<String, Vec<BagItem>>) {
+pub fn generate_lookups(
+    rules: Vec<BagRule>,
+) -> (
+    HashMap<String, HashSet<String>>,
+    HashMap<String, Vec<BagItem>>,
+) {
     let mut lookup_is_inside = HashMap::new();
     let mut lookup_contains = HashMap::new();
 
@@ -81,8 +102,9 @@ pub fn generate_lookups(rules: Vec<BagRule>) -> (HashMap<String, HashSet<String>
         let r = rule.clone();
         if let Some(value) = r.contains {
             value.iter().for_each(|x| {
-                lookup_is_inside.entry(x.bag_color.clone())
-                    .or_insert_with(|| {HashSet::new()})
+                lookup_is_inside
+                    .entry(x.bag_color.clone())
+                    .or_insert_with(|| HashSet::new())
                     .insert(rule.bag_color.clone());
             });
             lookup_contains.insert(r.bag_color, value);
@@ -93,12 +115,17 @@ pub fn generate_lookups(rules: Vec<BagRule>) -> (HashMap<String, HashSet<String>
 }
 
 // Calculate which bag colors contain a bag of the provided color.
-pub fn bag_colors_contain(lookup: &HashMap<String, HashSet<String>>, color: String) -> HashSet<String>{
-    lookup.get(&color).map_or(HashSet::new(), |contained_by|{
-        contained_by.iter().fold(contained_by.clone(), |mut c, contained_by_color| {
-            c.extend(bag_colors_contain(lookup, contained_by_color.clone()));
-            c
-        })
+pub fn bag_colors_contain(
+    lookup: &HashMap<String, HashSet<String>>,
+    color: String,
+) -> HashSet<String> {
+    lookup.get(&color).map_or(HashSet::new(), |contained_by| {
+        contained_by
+            .iter()
+            .fold(contained_by.clone(), |mut c, contained_by_color| {
+                c.extend(bag_colors_contain(lookup, contained_by_color.clone()));
+                c
+            })
     })
 }
 
@@ -107,11 +134,14 @@ pub fn bag_colors_contain(lookup: &HashMap<String, HashSet<String>>, color: Stri
 pub fn count_bags_inside(lookup: &HashMap<String, Vec<BagItem>>, color: String) -> i32 {
     const EMPTY_BAG_COUNT: i32 = 0;
 
-    lookup.get(&color).map_or(EMPTY_BAG_COUNT, |contents|{
-        contents.iter().map(|content_type| {
-            let bags_inside = count_bags_inside(lookup, content_type.bag_color.clone());
-            content_type.count * (1 + bags_inside) // 1 for the bag itself
-        }).sum()
+    lookup.get(&color).map_or(EMPTY_BAG_COUNT, |contents| {
+        contents
+            .iter()
+            .map(|content_type| {
+                let bags_inside = count_bags_inside(lookup, content_type.bag_color.clone());
+                content_type.count * (1 + bags_inside) // 1 for the bag itself
+            })
+            .sum()
     })
 }
 
@@ -120,7 +150,7 @@ pub fn run_calc() -> (usize, i32) {
     let rules = parse_input(data);
     let (lookup_inside, lookup_contains) = generate_lookups(rules);
     const SHINY_GOLD_BAG: &str = "shiny gold";
-    let colors = bag_colors_contain(&lookup_inside,  SHINY_GOLD_BAG.to_string());
+    let colors = bag_colors_contain(&lookup_inside, SHINY_GOLD_BAG.to_string());
     let bags_inside = count_bags_inside(&lookup_contains, "shiny gold".to_string());
     (colors.len(), bags_inside)
 }
@@ -135,4 +165,3 @@ mod tests {
         assert_eq!(result, (222, 13264));
     }
 }
-
