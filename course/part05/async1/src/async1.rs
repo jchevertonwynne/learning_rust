@@ -10,12 +10,11 @@ async fn hello_world() {
     println!("hello world!");
 }
 
-use std::future::Future;
 use std::pin::Pin;
 use std::task::Context;
 
 // keeps producing Pending until it's Ready
-trait MyFuture {
+trait Future {
     type Output;
 
     fn poll(self: Pin<&mut Self>, cx: &Context) -> Poll<Self::Output>;
@@ -27,13 +26,13 @@ enum Poll<T> {
 }
 
 // keeps producing Some until all elements are exhausted and gives None
-trait MyIterator {
+trait Iterator {
     type Item;
 
-    fn next(&mut self) -> MyOption<Self::Item>;
+    fn next(&mut self) -> Option<Self::Item>;
 }
 
-enum MyOption<T> {
+enum Option<T> {
     Some(T),
     None
 }
