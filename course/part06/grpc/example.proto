@@ -1,0 +1,24 @@
+syntax = "proto3";
+package example;
+
+service MyService {
+    rpc MyMethod(MyRequest) returns (MyResponse);
+}
+
+message MyRequest {
+    string name = 1;
+    int32 age = 2;
+    oneof earnings {
+        int32 salaried = 3;
+        Hourly hourly = 4;
+    } 
+}
+
+message Hourly {
+    int32 hours = 1;
+    float per_hour = 2;
+}
+
+message MyResponse {
+    string acceptance_message = 1;
+}
