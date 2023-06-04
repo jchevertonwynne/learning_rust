@@ -1,17 +1,44 @@
+use std::{
+    error::Error,
+    fmt::Display,
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
+    time::Duration,
+};
+
 use async_trait::async_trait;
+use futures_util::FutureExt;
 use grpc::my_service_server::{MyService, MyServiceServer};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let requests = Arc::new(AtomicUsize::new(0));
+    {
+        let requests = Arc::clone(&requests);
+        tokio::spawn(async move {
+            for i in 0.. {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                let count = requests.load(SeqCst);
+                println!("{i}: there have been {count} requests so far...");
+            }
+        });
+    }
+
+    let shutdown = tokio::signal::ctrl_c().map(|_| ());
     tonic::transport::Server::builder()
-        .add_service(MyServiceServer::new(MyServiceImpl {}))
-        .serve(([127, 0, 0, 1], 25565).into())
+        .add_service(MyServiceServer::new(MyServiceImpl { requests }))
+        .serve_with_shutdown(([127, 0, 0, 1], 25565).into(), shutdown)
         .await?;
 
     Ok(())
 }
 
-struct MyServiceImpl {}
+#[derive(Default)]
+struct MyServiceImpl {
+    requests: Arc<AtomicUsize>,
+}
 
 #[async_trait]
 impl MyService for MyServiceImpl {
@@ -19,6 +46,7 @@ impl MyService for MyServiceImpl {
         &self,
         request: tonic::Request<grpc::MyRequest>,
     ) -> Result<tonic::Response<grpc::MyResponse>, tonic::Status> {
+        self.requests.fetch_add(1, SeqCst);
         let request = request.into_inner();
         let request: Request = match (&request).try_into() {
             Ok(request) => request,
@@ -81,6 +109,14 @@ enum MyRequestError {
     InvalidHours,
     InvalidPerHours,
 }
+
+impl Display for MyRequestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", Into::<&'static str>::into(*self))
+    }
+}
+
+impl Error for MyRequestError {}
 
 impl From<MyRequestError> for &'static str {
     fn from(value: MyRequestError) -> Self {
