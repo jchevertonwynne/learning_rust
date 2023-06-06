@@ -1,7 +1,7 @@
 #![allow(unused_imports, unused_variables)]
 
-use std::time::Duration;
 use std::thread::spawn;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() {

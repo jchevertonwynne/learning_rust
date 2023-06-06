@@ -1,4 +1,4 @@
-use grpc::{my_service_client::MyServiceClient, Hourly, MyRequest, my_request::Earnings};
+use grpc::{my_request::Earnings, my_service_client::MyServiceClient, Hourly, MyRequest};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

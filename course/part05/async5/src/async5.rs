@@ -1,7 +1,13 @@
 #![allow(dead_code, unused_imports)]
 
-use std::{fmt::{Debug, Display}, future::Future, pin::pin, sync::Arc, time::Duration};
 use std::fmt::Formatter;
+use std::{
+    fmt::{Debug, Display},
+    future::Future,
+    pin::pin,
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::Context;
 use reqwest::{Client, ClientBuilder};
@@ -32,7 +38,10 @@ async fn main() -> anyhow::Result<()> {
     // let drawn_cards2 = draw_cards(client.clone(), deck_id, 3)?;
     // let (drawn_cards1, drawn_cards2) = tokio::try_join!(drawn_cards1, drawn_cards2)?;
 
-    println!("total retrieved cards: {}", drawn_cards1.cards.len() + drawn_cards2.cards.len());
+    println!(
+        "total retrieved cards: {}",
+        drawn_cards1.cards.len() + drawn_cards2.cards.len()
+    );
 
     let pretty = toml::to_string_pretty(&drawn_cards1).unwrap();
 

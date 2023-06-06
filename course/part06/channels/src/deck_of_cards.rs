@@ -1,9 +1,10 @@
-
-use std::{future::Future, fmt::{Display, Formatter, Debug}};
+use std::{
+    fmt::{Debug, Display, Formatter},
+    future::Future,
+};
 
 use reqwest::Client;
 use url::Url;
-
 
 pub async fn new_deck(client: Client) -> Result<DeckInfo, reqwest::Error> {
     let deck_info: DeckInfo = client
