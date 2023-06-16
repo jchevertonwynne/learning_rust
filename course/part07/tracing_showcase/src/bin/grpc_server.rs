@@ -5,14 +5,13 @@ use std::sync::atomic::AtomicUsize;
 use async_trait::async_trait;
 use futures::{FutureExt, StreamExt};
 use grpc::cards_service_server::CardsServiceServer;
-use grpc::{DrawCardsRequest, DrawCardsResponse, NewDecksRequest, NewDecksResponse};
 use mongodb::bson::doc;
 use mongodb::options::UpdateModifications;
 use mongodb::Collection;
 use serde::{Deserialize, Serialize};
-use tracing::{info, trace};
-use tracing_showcase::deck_of_cards::DeckID;
+use tracing::info;
 use tracing_showcase::deck_of_cards::{self, DrawnCardsInfo};
+use tracing_showcase::deck_of_cards::{DeckID, DeckInfo};
 use tracing_showcase::grpc;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -67,12 +66,6 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tracing::instrument(name = "my instrumented layer")]
-fn task(a: usize, b: usize) -> usize {
-    trace!("logging from the task");
-    a + b
-}
-
 struct CardsServiceState {
     requests: AtomicUsize,
     client: reqwest::Client,
@@ -90,50 +83,38 @@ impl CardsServiceState {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-struct Record {
-    deck_id: String,
-    count: usize,
-}
-
 #[async_trait]
 impl grpc::cards_service_server::CardsService for CardsServiceState {
     #[tracing::instrument(skip(self, request))]
     async fn new_decks(
         &self,
-        request: tonic::Request<NewDecksRequest>,
-    ) -> Result<tonic::Response<NewDecksResponse>, tonic::Status> {
+        request: tonic::Request<grpc::NewDecksRequest>,
+    ) -> Result<tonic::Response<grpc::NewDecksResponse>, tonic::Status> {
         let requests = 1 + self
             .requests
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         info!("there have been {requests} requests");
 
-        let deck_info =
-            match deck_of_cards::new_deck(self.client.clone(), request.into_inner().decks as usize)
-                .await
-            {
-                Ok(deck_info) => deck_info,
-                Err(err) => return Err(tonic::Status::internal(err.to_string())),
-            };
+        let NewDecksRequest { decks } = match NewDecksRequest::try_from(request.into_inner()) {
+            Ok(deck_request) => deck_request,
+            Err(err) => return Err(tonic::Status::invalid_argument(err.to_string())),
+        };
 
-        info!("created a new deck");
+        let deck_id = match self._new_deck(decks).await {
+            Ok(deck_id) => deck_id,
+            Err(err) => return Err(tonic::Status::internal(err.to_string())),
+        };
 
-        if let Err(err) = self.record_controller.create(deck_info.deck_id).await {
-            return Err(tonic::Status::internal(err.to_string()));
-        }
-
-        info!("stored deck in mongo");
-
-        let deck_id = deck_info.deck_id.to_string();
-
-        Ok(tonic::Response::new(NewDecksResponse { deck_id }))
+        Ok(tonic::Response::new(grpc::NewDecksResponse {
+            deck_id: deck_id.to_string(),
+        }))
     }
 
     #[tracing::instrument(skip(self, request))]
     async fn draw_cards(
         &self,
-        request: tonic::Request<DrawCardsRequest>,
-    ) -> Result<tonic::Response<DrawCardsResponse>, tonic::Status> {
+        request: tonic::Request<grpc::DrawCardsRequest>,
+    ) -> Result<tonic::Response<grpc::DrawCardsResponse>, tonic::Status> {
         let requests = 1 + self
             .requests
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -143,30 +124,15 @@ impl grpc::cards_service_server::CardsService for CardsServiceState {
             deck_id,
             count,
             hands,
-        } = request.into_inner();
-        let deck_id = match DeckID::try_from(deck_id.as_str()) {
-            Ok(deck_id) => deck_id,
+        } = match DrawCardsRequest::try_from(request.into_inner()) {
+            Ok(cards_request) => cards_request,
             Err(err) => return Err(tonic::Status::invalid_argument(err.to_string())),
         };
 
-        if count <= 0 {
-            return Err(tonic::Status::invalid_argument(
-                "count must be greater than or equal to zero",
-            ));
-        }
-
-        let hands = match draw_all_cards(self.client.clone(), deck_id, hands, count).await {
+        let hands = match self._draw_cards(deck_id, hands, count).await {
             Ok(hands) => hands,
             Err(err) => return Err(tonic::Status::internal(err.to_string())),
         };
-
-        info!("drawn all cards");
-
-        if let Err(err) = self.record_controller.increment_count(deck_id).await {
-            return Err(tonic::Status::internal(err.to_string()));
-        }
-
-        info!("incremented count in mongo");
 
         let hands = hands
             .into_iter()
@@ -176,7 +142,130 @@ impl grpc::cards_service_server::CardsService for CardsServiceState {
             })
             .collect();
 
-        Ok(tonic::Response::new(DrawCardsResponse { hands }))
+        Ok(tonic::Response::new(grpc::DrawCardsResponse { hands }))
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum NewDeckError {
+    #[error("failed to draw cards: {0}")]
+    ReqwestError(#[from] reqwest::Error),
+    #[error("failed to update mongo: {0}")]
+    MongoError(#[from] mongodb::error::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+enum DrawCardsError {
+    #[error("failed to draw cards: {0}")]
+    ReqwestError(#[from] reqwest::Error),
+    #[error("failed to update mongo: {0}")]
+    MongoError(#[from] mongodb::error::Error),
+}
+
+impl CardsServiceState {
+    #[tracing::instrument(skip(self))]
+    async fn _new_deck(&self, decks: usize) -> Result<DeckID, NewDeckError> {
+        let DeckInfo { deck_id, .. } = deck_of_cards::new_deck(self.client.clone(), decks).await?;
+
+        info!("created a new deck");
+
+        self.record_controller.create(deck_id).await?;
+
+        info!("stored deck in mongo");
+
+        Ok(deck_id)
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn _draw_cards(
+        &self,
+        deck_id: DeckID,
+        hands: usize,
+        count: u8,
+    ) -> Result<Vec<DrawnCardsInfo>, DrawCardsError> {
+        let hands = draw_all_cards(self.client.clone(), deck_id, hands, count).await?;
+
+        info!("drawn all cards");
+
+        self.record_controller.increment_count(deck_id).await?;
+
+        info!("incremented count in mongo");
+
+        Ok(hands)
+    }
+}
+
+struct NewDecksRequest {
+    decks: usize,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum NewDecksRequestValidationError {
+    #[error("count must be a positive integer")]
+    InvalidDeckCount,
+}
+
+impl TryFrom<grpc::NewDecksRequest> for NewDecksRequest {
+    type Error = NewDecksRequestValidationError;
+
+    fn try_from(value: grpc::NewDecksRequest) -> Result<Self, Self::Error> {
+        let grpc::NewDecksRequest { decks } = value;
+
+        let Ok(decks) = usize::try_from(decks) else {
+            return Err(NewDecksRequestValidationError::InvalidDeckCount);
+        };
+
+        if decks == 0 {
+            return Err(NewDecksRequestValidationError::InvalidDeckCount);
+        }
+
+        Ok(NewDecksRequest { decks })
+    }
+}
+
+struct DrawCardsRequest {
+    deck_id: DeckID,
+    hands: usize,
+    count: u8,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum DrawCardsRequestValidationError {
+    #[error("a deck id must be 12 lowercase letters and numbers")]
+    DeckId,
+    #[error("hands must be a positive integer")]
+    Hands,
+    #[error("count must be a positive u8 value")]
+    Count,
+}
+
+impl TryFrom<grpc::DrawCardsRequest> for DrawCardsRequest {
+    type Error = DrawCardsRequestValidationError;
+
+    fn try_from(value: grpc::DrawCardsRequest) -> Result<Self, Self::Error> {
+        let grpc::DrawCardsRequest {
+            deck_id,
+            hands,
+            count,
+        } = value;
+
+        let Ok(deck_id) = DeckID::try_from(deck_id.as_str()) else {
+            return Err(DrawCardsRequestValidationError::DeckId);
+        };
+
+        let Ok(count) =  u8::try_from(count) else {
+            return Err(DrawCardsRequestValidationError::Count);
+        };
+
+        let Ok(hands) = usize::try_from(hands) else {
+            return Err(DrawCardsRequestValidationError::Hands);
+        };
+
+        Ok(DrawCardsRequest {
+            deck_id,
+            hands,
+            count,
+        })
     }
 }
 
@@ -184,24 +273,27 @@ impl grpc::cards_service_server::CardsService for CardsServiceState {
 async fn draw_all_cards(
     client: reqwest::Client,
     deck_id: DeckID,
-    hands: i32,
-    count: i32,
+    hands: usize,
+    count: u8,
 ) -> Result<Vec<DrawnCardsInfo>, reqwest::Error> {
     let mut stream = futures::stream::iter((0..hands).map(|_| {
-        deck_of_cards::draw_cards(client.clone(), deck_id, count as u8)
+        deck_of_cards::draw_cards(client.clone(), deck_id, count)
             .expect("we checked the count is >0")
     }))
     .buffer_unordered(3);
 
     let mut hands = vec![];
     while let Some(hand) = stream.next().await {
-        match hand {
-            Ok(hand) => hands.push(hand),
-            Err(err) => return Err(err),
-        }
+        hands.push(hand?);
     }
 
     Ok(hands)
+}
+
+#[derive(Serialize, Deserialize)]
+struct Record {
+    deck_id: String,
+    count: usize,
 }
 
 struct MongoRecordController {
