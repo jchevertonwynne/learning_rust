@@ -1,0 +1,59 @@
+syntax = "proto3";
+package cards;
+
+service CardsService {
+  rpc NewDecks(NewDecksRequest) returns (NewDecksResponse);
+  rpc DrawCards(DrawCardsRequest) returns (DrawCardsResponse);
+}
+
+message NewDecksRequest {
+  int32 decks = 1;
+}
+
+message NewDecksResponse {
+  string deckID = 1;
+}
+
+message DrawCardsRequest {
+  string deck_id = 1;
+  int32 count = 2;
+  int32 hands = 3;
+}
+
+message DrawCardsResponse {
+  repeated Hand hands = 1;
+}
+
+message Hand {
+  repeated Card cards = 1;
+}
+
+message Card {
+  Suit suit = 1;
+  Value value = 2;
+}
+
+enum Suit {
+  SuitUnknown = 0;
+  Club = 1;
+  Spade = 2;
+  Heart = 3;
+  Diamond = 4;
+}
+
+enum Value {
+  ValueUnknown = 0;
+  ValueAce = 1;
+  Value2 = 2;
+  Value3 = 3;
+  Value4 = 4;
+  Value5 = 5;
+  Value6 = 6;
+  Value7 = 7;
+  Value8 = 8;
+  Value9 = 9;
+  Value10 = 10;
+  ValueJack = 11;
+  ValueQueen = 12;
+  ValueKing = 13;
+}

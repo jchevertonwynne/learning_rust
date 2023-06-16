@@ -1,4 +1,4 @@
-#![allow(clippy::manual_async_fn)]
+#![allow(clippy::manual_async_fn, unused_imports, dead_code)]
 
 // the tokio::main macro
 
@@ -11,8 +11,8 @@ use std::{future::Future, time::Duration};
 async fn main() {
     hello_world().await;
     hello_world_2().await;
-    self_referential(tokio::time::sleep(Duration::from_secs(1))).await;
-    BadFuture { count: 0 }.await;
+    // self_referential(tokio::time::sleep(Duration::from_secs(1))).await;
+    // BadFuture { count: 0 }.await;
 }
 
 async fn hello_world() {
