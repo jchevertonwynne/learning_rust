@@ -70,10 +70,10 @@ impl Display for DeckIDParseError {
 
 impl std::error::Error for DeckIDParseError {}
 
-impl TryFrom<String> for DeckID {
+impl<'a> TryFrom<&'a str> for DeckID {
     type Error = DeckIDParseError;
 
-    fn try_from(value: String) -> Result<Self, Self::Error> {
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
         if value.len() != 12 {
             return Err(DeckIDParseError);
         }
@@ -136,33 +136,9 @@ impl<'de> serde::Deserialize<'de> for DeckID {
             where
                 E: serde::de::Error,
             {
-                if !v.is_ascii() {
-                    return Err(serde::de::Error::invalid_value(
-                        serde::de::Unexpected::Str(v),
-                        &self,
-                    ));
-                }
-
-                let mut res = [0; 12];
-                let mut chars = v.chars();
-
-                for (i, b) in res.iter_mut().enumerate() {
-                    let Some(c) = chars.next() else {
-                        return Err(serde::de::Error::invalid_length(i, &self));
-                    };
-
-                    let Ok(byte) = c.try_into() else {
-                        return Err(serde::de::Error::invalid_value(serde::de::Unexpected::Char(c), &self));
-                    };
-
-                    *b = byte;
-                }
-
-                if chars.next().is_some() {
-                    return Err(serde::de::Error::invalid_length(13 + chars.count(), &self));
-                }
-
-                Ok(DeckID(res))
+                DeckID::try_from(v).map_err(|_| {
+                    serde::de::Error::invalid_value(serde::de::Unexpected::Str(v), &self)
+                })
             }
         }
 
@@ -198,7 +174,10 @@ impl<'a> From<&'a Card> for super::grpc::Card {
     fn from(card: &'a Card) -> Self {
         let value: grpc::Value = (&card.value).into();
         let suit: grpc::Suit = (&card.suit).into();
-        Self{value: value.into(), suit: suit.into()}
+        Self {
+            value: value.into(),
+            suit: suit.into(),
+        }
     }
 }
 

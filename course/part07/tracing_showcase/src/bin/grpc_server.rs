@@ -145,7 +145,7 @@ impl grpc::cards_service_server::CardsService for CardsServiceState {
             count,
             hands,
         } = request.into_inner();
-        let deck_id = match DeckID::try_from(deck_id) {
+        let deck_id = match DeckID::try_from(deck_id.as_str()) {
             Ok(deck_id) => deck_id,
             Err(err) => return Err(tonic::Status::invalid_argument(err.to_string())),
         };
