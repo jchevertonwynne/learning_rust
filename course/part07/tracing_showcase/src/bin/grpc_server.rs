@@ -17,18 +17,10 @@ use tracing_showcase::grpc;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{Registry, EnvFilter};
+use tracing_subscriber::{EnvFilter, Registry};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let tracer = opentelemetry_jaeger::new_agent_pipeline()
-        .with_service_name("tracing_showcase")
-        .with_max_packet_size(9216)
-        .with_auto_split_batch(true)
-        .install_batch(opentelemetry::runtime::Tokio)?;
-
-    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-
     Registry::default()
         .with(
             EnvFilter::builder()
@@ -36,7 +28,14 @@ async fn main() -> anyhow::Result<()> {
                 .from_env_lossy(),
         )
         .with(tracing_subscriber::fmt::layer())
-        .with(telemetry)
+        .with(
+            tracing_opentelemetry::layer().with_tracer(
+                opentelemetry_jaeger::new_agent_pipeline()
+                    .with_service_name("tracing_showcase")
+                    .with_auto_split_batch(true)
+                    .install_batch(opentelemetry::runtime::Tokio)?,
+            ),
+        )
         .init();
 
     info!("starting grpc server...");
