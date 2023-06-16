@@ -15,7 +15,7 @@ async fn main() -> anyhow::Result<()> {
         .draw_cards(DrawCardsRequest {
             deck_id: decks.deck_id.clone(),
             count: 4,
-            hands: 2,
+            hands: 20,
         })
         .await?
         .into_inner();

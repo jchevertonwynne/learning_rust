@@ -7,7 +7,6 @@ use futures::{FutureExt, StreamExt};
 use grpc::cards_service_server::CardsServiceServer;
 use mongodb::bson::doc;
 use mongodb::options::UpdateModifications;
-use mongodb::Collection;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 use tracing_showcase::deck_of_cards::{self, DrawnCardsInfo};
@@ -31,6 +30,7 @@ async fn main() -> anyhow::Result<()> {
             tracing_opentelemetry::layer().with_tracer(
                 opentelemetry_jaeger::new_agent_pipeline()
                     .with_service_name("tracing_showcase")
+                    .with_max_packet_size(8192)
                     .with_auto_split_batch(true)
                     .install_batch(opentelemetry::runtime::Tokio)?,
             ),
@@ -40,8 +40,7 @@ async fn main() -> anyhow::Result<()> {
     info!("starting grpc server...");
 
     let mongo_client = mongodb::Client::with_uri_str("mongodb://localhost:27017").await?;
-    let collection = mongo_client.database("joseph").collection("testing");
-    let record_controller = MongoRecordController::new(collection);
+    let record_controller = MongoRecordController::new(&mongo_client);
 
     info!("connected to mongo...");
 
@@ -232,7 +231,7 @@ struct DrawCardsRequest {
 #[derive(Debug, thiserror::Error)]
 enum DrawCardsRequestValidationError {
     #[error("a deck id must be 12 lowercase letters and numbers")]
-    DeckId,
+    DeckID,
     #[error("hands must be a positive integer")]
     Hands,
     #[error("count must be a positive u8 value")]
@@ -250,7 +249,7 @@ impl TryFrom<grpc::DrawCardsRequest> for DrawCardsRequest {
         } = value;
 
         let Ok(deck_id) = DeckID::try_from(deck_id.as_str()) else {
-            return Err(DrawCardsRequestValidationError::DeckId);
+            return Err(DrawCardsRequestValidationError::DeckID);
         };
 
         let Ok(count) =  u8::try_from(count) else {
@@ -276,10 +275,9 @@ async fn draw_all_cards(
     hands: usize,
     count: u8,
 ) -> Result<Vec<DrawnCardsInfo>, reqwest::Error> {
-    let mut stream = futures::stream::iter((0..hands).map(|_| {
-        deck_of_cards::draw_cards(client.clone(), deck_id, count)
-            .expect("we checked the count is >0")
-    }))
+    let mut stream = futures::stream::iter(
+        (0..hands).map(|_| deck_of_cards::draw_cards(client.clone(), deck_id, count)),
+    )
     .buffer_unordered(3);
 
     let mut hands = vec![];
@@ -297,11 +295,12 @@ struct Record {
 }
 
 struct MongoRecordController {
-    collection: Collection<Record>,
+    collection: mongodb::Collection<Record>,
 }
 
 impl MongoRecordController {
-    fn new(collection: Collection<Record>) -> Self {
+    fn new(client: &mongodb::Client) -> Self {
+        let collection = client.database("joseph").collection("testing");
         Self { collection }
     }
 

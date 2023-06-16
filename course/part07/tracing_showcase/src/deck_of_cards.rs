@@ -1,10 +1,6 @@
-use std::{
-    fmt::{Debug, Display, Formatter},
-    future::Future,
-};
+use std::fmt::{Debug, Display, Formatter};
 
 use reqwest::Client;
-use tracing::Instrument;
 use url::Url;
 
 use crate::grpc;
@@ -24,51 +20,33 @@ pub async fn new_deck(client: Client, decks: usize) -> Result<DeckInfo, reqwest:
     Ok(deck_info)
 }
 
-// this function runs its first part sync, then returns an async block
-// this is useful especially when there's some immediately failable setup
 #[tracing::instrument(skip(client))]
-pub fn draw_cards(
+pub async fn draw_cards(
     client: Client,
     deck_id: DeckID,
     n: u8,
-) -> Result<impl Future<Output = Result<DrawnCardsInfo, reqwest::Error>>, CantBeZeroError> {
-    if n == 0 {
-        return Err(CantBeZeroError);
-    }
-    let req = client
+) -> Result<DrawnCardsInfo, reqwest::Error> {
+    client
         .get(format!(
             "https://deckofcardsapi.com/api/deck/{deck_id}/draw/?count={n}"
         ))
-        .send();
-
-    // .instrument auto applies context only when the async block is being executed
-    Ok(async move { req.await?.json().await }.instrument(tracing::Span::current()))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("cards retrieved can't be zero")]
 pub struct CantBeZeroError;
-
-impl Display for CantBeZeroError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "cards retrieved can't be zero")
-    }
-}
-
-impl std::error::Error for CantBeZeroError {}
 
 #[derive(Copy, Clone)]
 pub struct DeckID([u8; 12]);
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("deck ID must be 12 lowercase letters or numbers")]
 pub struct DeckIDParseError;
-
-impl Display for DeckIDParseError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "failed to parse deck - must be 12 ascii characters")
-    }
-}
-
-impl std::error::Error for DeckIDParseError {}
 
 impl<'a> TryFrom<&'a str> for DeckID {
     type Error = DeckIDParseError;
@@ -170,7 +148,7 @@ pub struct Card {
     pub suit: Suit,
 }
 
-impl<'a> From<&'a Card> for super::grpc::Card {
+impl<'a> From<&'a Card> for grpc::Card {
     fn from(card: &'a Card) -> Self {
         let value: grpc::Value = (&card.value).into();
         let suit: grpc::Suit = (&card.suit).into();
@@ -339,7 +317,7 @@ pub enum Value {
     King,
 }
 
-impl<'a> From<&'a Value> for super::grpc::Value {
+impl<'a> From<&'a Value> for grpc::Value {
     fn from(value: &'a Value) -> Self {
         match value {
             Value::Ace => Self::Ace,
@@ -371,7 +349,7 @@ pub enum Suit {
     Hearts,
 }
 
-impl<'a> From<&'a Suit> for super::grpc::Suit {
+impl<'a> From<&'a Suit> for grpc::Suit {
     fn from(value: &'a Suit) -> Self {
         match value {
             Suit::Clubs => Self::Club,
