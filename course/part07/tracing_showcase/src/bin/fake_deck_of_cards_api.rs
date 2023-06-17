@@ -13,7 +13,7 @@ use std::net::ToSocketAddrs;
 use std::str::FromStr;
 use std::time::Duration;
 use strum::IntoEnumIterator;
-use tracing::{info, instrument, span};
+use tracing::{info, info_span, instrument};
 use tracing_showcase::deck_of_cards::{
     Card, Code, DeckID, DeckInfo, DrawnCardsInfo, Images, Suit, Value,
 };
@@ -22,7 +22,7 @@ use url::Url;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_tracing("fake_deck_of_cards_api")?;
+    let _cleanup = init_tracing("fake deck of cards api")?;
 
     let mongo_client = mongodb::Client::with_uri_str("mongodb://localhost:27017").await?;
     let app_state = AppState::new(&mongo_client);
@@ -73,8 +73,13 @@ impl AppState {
         Ok(found)
     }
 
-    #[instrument(skip(self, deck_entry))]
-    async fn new_deck(&self, deck_entry: DeckEntry) -> Result<(), mongodb::error::Error> {
+    #[instrument(skip(self))]
+    async fn new_deck(&self, deck_id: DeckID) -> Result<(), mongodb::error::Error> {
+        let deck_entry = DeckEntry {
+            deck_id,
+            cards: vec![],
+            card_count: 0,
+        };
         self.decks_collection.insert_one(deck_entry, None).await?;
         Ok(())
     }
@@ -85,11 +90,12 @@ impl AppState {
         deck_id: DeckID,
         cards: Vec<Card>,
     ) -> Result<(), mongodb::error::Error> {
+        let card_count = mongodb::bson::to_bson(&cards.len())?;
         let cards = mongodb::bson::to_bson(&cards)?;
         self.decks_collection
             .update_one(
                 doc! { "deck_id": deck_id.to_string() },
-                doc! { "$set": { "cards":  cards } },
+                doc! { "$inc": {  "card_count": card_count }, "$push": { "cards":  { "$each": cards } } },
                 None,
             )
             .await?;
@@ -102,35 +108,46 @@ impl AppState {
         deck_id: DeckID,
         n_cards: usize,
     ) -> Result<Vec<Card>, RemoveCardsError> {
-        let DeckEntry { deck_id, mut cards } = self.get_deck_info(deck_id).await?;
-        info!("retrieved deck");
-        if cards.len() < n_cards {
-            info!("not enough cards, wanted {n_cards} got {}", cards.len());
-            return Err(RemoveCardsError::NotEnoughCardsError {
-                requested: n_cards,
-                available: cards.len(),
-            });
-        }
+        let n_cards_bson = mongodb::bson::to_bson(&n_cards)?;
+
+        let DeckEntry { mut cards, .. } = self
+            .decks_collection
+            .find_one_and_update(
+                doc! {
+                    "deck_id": deck_id.to_string(),
+                    "card_count": { "$gte": n_cards_bson.clone()
+                    }
+                },
+                vec![doc! {
+                    "$set": {
+                        "card_count": { "$subtract": [ "$card_count", n_cards_bson.clone() ] },
+                        "cards": {
+                            "$slice": ["$cards", 0, { "$subtract": [ "$card_count", n_cards_bson.clone() ] } ]
+                        },
+                    }
+                }],
+                None,
+            )
+            .await?
+            .ok_or(RemoveCardsError::InvalidDocument)?;
 
         let mut result = Vec::with_capacity(n_cards);
         for _ in 0..n_cards {
             result.push(cards.pop().expect("ensured there are enough cars already"))
         }
         info!("removed cards");
-        self.update_cards(deck_id, cards).await?;
-        info!("returned deck");
         Ok(result)
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 enum RemoveCardsError {
+    #[error("Failed to find document")]
+    InvalidDocument,
     #[error("mongo operation failed: {0}")]
-    MongoError(#[from] mongodb::error::Error),
-    #[error(
-        "document did not contain enough cards: requested {requested}, only {available} available"
-    )]
-    NotEnoughCardsError { requested: usize, available: usize },
+    Mongo(#[from] mongodb::error::Error),
+    #[error("failed to convert value to bson: {0}")]
+    Bson(#[from] mongodb::bson::ser::Error),
 }
 
 #[instrument(skip(app_state))]
@@ -140,16 +157,11 @@ async fn new_decks(
 ) -> Result<Json<DeckInfo>, NewDecksError> {
     let deck_id = DeckID::random();
 
-    let span = span!(tracing::Level::INFO, "created deck id", %deck_id);
+    let span = info_span!("created deck id", %deck_id);
     let _entered = span.enter();
     info!("created a new deck id");
 
-    app_state
-        .new_deck(DeckEntry {
-            deck_id,
-            cards: vec![],
-        })
-        .await?;
+    app_state.new_deck(deck_id).await?;
 
     info!("inserted into mongo");
 
@@ -190,7 +202,7 @@ impl axum::response::IntoResponse for NewDecksError {
             NewDecksError::MongoError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
-        (code, self).into_response()
+        (code, self.to_string()).into_response()
     }
 }
 
@@ -219,33 +231,29 @@ struct DrawCardsQuery {
 impl From<RemoveCardsError> for DrawCardsError {
     fn from(value: RemoveCardsError) -> Self {
         match value {
-            RemoveCardsError::MongoError(err) => DrawCardsError::MongoError(err),
-            RemoveCardsError::NotEnoughCardsError {
-                requested,
-                available,
-            } => DrawCardsError::NotEnoughCards {
-                requested,
-                available,
-            },
+            RemoveCardsError::Mongo(err) => DrawCardsError::Mongo(err),
+            RemoveCardsError::InvalidDocument => DrawCardsError::InvalidDocument,
+            RemoveCardsError::Bson(err) => DrawCardsError::Bson(err),
         }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 enum DrawCardsError {
+    #[error("Failed to find document")]
+    InvalidDocument,
     #[error("mongo operation failed: {0}")]
-    MongoError(#[from] mongodb::error::Error),
-    #[error(
-        "this deck does not contain enough cards: wanted {requested}, ony {available} available"
-    )]
-    NotEnoughCards { requested: usize, available: usize },
+    Mongo(#[from] mongodb::error::Error),
+    #[error("failed to convert value to bson: {0}")]
+    Bson(#[from] mongodb::bson::ser::Error),
 }
 
 impl axum::response::IntoResponse for DrawCardsError {
     fn into_response(self) -> Response {
         let code = match self {
-            DrawCardsError::MongoError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            DrawCardsError::NotEnoughCards { .. } => StatusCode::BAD_REQUEST,
+            DrawCardsError::Mongo(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            DrawCardsError::InvalidDocument => StatusCode::BAD_REQUEST,
+            DrawCardsError::Bson(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
         (code, self.to_string()).into_response()
@@ -256,6 +264,7 @@ impl axum::response::IntoResponse for DrawCardsError {
 struct DeckEntry {
     deck_id: DeckID,
     cards: Vec<Card>,
+    card_count: usize,
 }
 
 fn generate_deck_of_cards() -> Vec<Card> {

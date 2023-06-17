@@ -2,6 +2,8 @@
 
 // DECK_OF_CARDS_URL=http://localhost:25566 to use fake deck of cards api
 
+use std::collections::HashMap;
+use std::fmt::Debug;
 use std::sync::atomic::AtomicUsize;
 
 use async_trait::async_trait;
@@ -9,16 +11,18 @@ use futures::{FutureExt, StreamExt, TryStreamExt};
 use grpc::cards_service_server::CardsServiceServer;
 use mongodb::bson::doc;
 use mongodb::options::UpdateModifications;
+use opentelemetry::propagation::Extractor;
 use serde::{Deserialize, Serialize};
 use tracing::info;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_showcase::deck_of_cards::{DeckID, DeckInfo};
 use tracing_showcase::deck_of_cards::{DeckOfCardsClient, DrawnCardsInfo};
 use tracing_showcase::{grpc, init_tracing};
 use url::Url;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    init_tracing("grpc_server")?;
+    let _cleanup = init_tracing("grpc server")?;
 
     info!("starting grpc server...");
 
@@ -48,8 +52,6 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     info!("this is another log!");
-
-    opentelemetry::global::shutdown_tracer_provider();
 
     Ok(())
 }
@@ -83,10 +85,14 @@ impl grpc::cards_service_server::CardsService for CardsServiceState {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         info!("there have been {requests} requests");
 
-        let new_decks_request = match NewDecksRequest::try_from(request.into_inner()) {
+        let WithContext::<NewDecksRequest> {
+            thing: new_decks_request,
+            ctx,
+        } = match WithContext::<NewDecksRequest>::try_from(request.into_inner()) {
             Ok(deck_request) => deck_request,
             Err(err) => return Err(tonic::Status::invalid_argument(err.to_string())),
         };
+        tracing::Span::current().set_parent(ctx);
 
         let deck_id = match self._new_deck(new_decks_request).await {
             Ok(deck_id) => deck_id,
@@ -108,10 +114,14 @@ impl grpc::cards_service_server::CardsService for CardsServiceState {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         info!("there have been {requests} requests");
 
-        let draw_cards_request = match DrawCardsRequest::try_from(request.into_inner()) {
+        let WithContext::<DrawCardsRequest> {
+            thing: draw_cards_request,
+            ctx,
+        } = match WithContext::<DrawCardsRequest>::try_from(request.into_inner()) {
             Ok(cards_request) => cards_request,
             Err(err) => return Err(tonic::Status::invalid_argument(err.to_string())),
         };
+        tracing::Span::current().set_parent(ctx);
 
         let hands = match self._draw_cards(draw_cards_request).await {
             Ok(hands) => hands,
@@ -191,11 +201,19 @@ impl CardsServiceState {
         hands: usize,
         count: u8,
     ) -> Result<Vec<DrawnCardsInfo>, reqwest::Error> {
+        // (0..hands)
+        //     .map(|_| self.cards_client.draw_cards(deck_id, count))
+        //     .collect::<FuturesUnordered<_>>()
         futures::stream::iter((0..hands).map(|_| self.cards_client.draw_cards(deck_id, count)))
             .buffer_unordered(5)
             .try_collect()
             .await
     }
+}
+
+struct WithContext<T> {
+    thing: T,
+    ctx: opentelemetry::Context,
 }
 
 #[derive(Debug)]
@@ -207,13 +225,21 @@ struct NewDecksRequest {
 enum NewDecksRequestValidationError {
     #[error("count must be a positive integer")]
     InvalidDeckCount,
+    #[error("failed to parse trace context: {0}")]
+    TraceContextParse(#[from] serde_json::Error),
 }
 
-impl TryFrom<grpc::NewDecksRequest> for NewDecksRequest {
+impl TryFrom<grpc::NewDecksRequest> for WithContext<NewDecksRequest> {
     type Error = NewDecksRequestValidationError;
 
     fn try_from(value: grpc::NewDecksRequest) -> Result<Self, Self::Error> {
-        let grpc::NewDecksRequest { decks } = value;
+        let grpc::NewDecksRequest { decks, ctx } = value;
+
+        info!("received context string: {ctx}");
+
+        let ext: MyContextExtractor = serde_json::from_str(&ctx)?;
+        info!("extracted to: {ext:?}");
+        let ctx = ext.extract();
 
         let Ok(decks) = usize::try_from(decks) else {
             return Err(NewDecksRequestValidationError::InvalidDeckCount);
@@ -223,7 +249,29 @@ impl TryFrom<grpc::NewDecksRequest> for NewDecksRequest {
             return Err(NewDecksRequestValidationError::InvalidDeckCount);
         }
 
-        Ok(NewDecksRequest { decks })
+        Ok(WithContext {
+            thing: NewDecksRequest { decks },
+            ctx,
+        })
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct MyContextExtractor(HashMap<String, String>);
+
+impl MyContextExtractor {
+    fn extract(&self) -> opentelemetry::Context {
+        opentelemetry::global::get_text_map_propagator(|propagator| propagator.extract(self))
+    }
+}
+
+impl Extractor for MyContextExtractor {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).map(|v| v.as_str())
+    }
+
+    fn keys(&self) -> Vec<&str> {
+        self.0.keys().map(|k| k.as_ref()).collect()
     }
 }
 
@@ -242,9 +290,11 @@ enum DrawCardsRequestValidationError {
     Hands,
     #[error("count must be a positive u8 value")]
     Count,
+    #[error("failed to parse trace context: {0}")]
+    TraceContextParse(#[from] serde_json::Error),
 }
 
-impl TryFrom<grpc::DrawCardsRequest> for DrawCardsRequest {
+impl TryFrom<grpc::DrawCardsRequest> for WithContext<DrawCardsRequest> {
     type Error = DrawCardsRequestValidationError;
 
     fn try_from(value: grpc::DrawCardsRequest) -> Result<Self, Self::Error> {
@@ -252,7 +302,13 @@ impl TryFrom<grpc::DrawCardsRequest> for DrawCardsRequest {
             deck_id,
             hands,
             count,
+            ctx,
         } = value;
+
+        info!("received context string: {ctx}");
+
+        let ext: MyContextExtractor = serde_json::from_str(&ctx)?;
+        let ctx = ext.extract();
 
         let Ok(deck_id) = DeckID::try_from(deck_id.as_str()) else {
             return Err(DrawCardsRequestValidationError::DeckID);
@@ -266,10 +322,13 @@ impl TryFrom<grpc::DrawCardsRequest> for DrawCardsRequest {
             return Err(DrawCardsRequestValidationError::Hands);
         };
 
-        Ok(DrawCardsRequest {
-            deck_id,
-            hands,
-            count,
+        Ok(WithContext {
+            thing: DrawCardsRequest {
+                deck_id,
+                hands,
+                count,
+            },
+            ctx,
         })
     }
 }

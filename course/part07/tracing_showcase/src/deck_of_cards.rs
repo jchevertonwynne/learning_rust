@@ -1,7 +1,7 @@
 use rand::seq::SliceRandom;
+use reqwest::Client;
 use std::fmt::{Debug, Display, Formatter};
 
-use reqwest::Client;
 use url::Url;
 
 use crate::grpc;
