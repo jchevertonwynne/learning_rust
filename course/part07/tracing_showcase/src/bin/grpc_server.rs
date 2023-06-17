@@ -3,19 +3,20 @@
 use std::sync::atomic::AtomicUsize;
 
 use async_trait::async_trait;
-use futures::{FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, TryStreamExt};
 use grpc::cards_service_server::CardsServiceServer;
 use mongodb::bson::doc;
 use mongodb::options::UpdateModifications;
 use serde::{Deserialize, Serialize};
 use tracing::info;
-use tracing_showcase::deck_of_cards::{self, DrawnCardsInfo};
+use tracing_showcase::deck_of_cards::{DeckOfCardsClient, DrawnCardsInfo};
 use tracing_showcase::deck_of_cards::{DeckID, DeckInfo};
 use tracing_showcase::grpc;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Registry};
+use url::Url;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -45,8 +46,14 @@ async fn main() -> anyhow::Result<()> {
     info!("connected to mongo...");
 
     let client = reqwest::ClientBuilder::default().build()?;
+    let url = Url::try_from(
+        std::env::var("DECK_OF_CARDS_URL")
+            .unwrap_or("https://deckofcardsapi.com".to_string())
+            .as_str(),
+    )?;
+    let cards_client = DeckOfCardsClient::new(url, client);
 
-    let service = CardsServiceState::new(client, record_controller);
+    let service = CardsServiceState::new(cards_client, record_controller);
 
     let addr = ([127, 0, 0, 1], 25565).into();
 
@@ -66,17 +73,17 @@ async fn main() -> anyhow::Result<()> {
 }
 
 struct CardsServiceState {
+    cards_client: DeckOfCardsClient,
     requests: AtomicUsize,
-    client: reqwest::Client,
     record_controller: MongoRecordController,
 }
 
 impl CardsServiceState {
-    fn new(client: reqwest::Client, record_controller: MongoRecordController) -> Self {
+    fn new(cards_client: DeckOfCardsClient, record_controller: MongoRecordController) -> Self {
         let requests = AtomicUsize::default();
         Self {
+            cards_client,
             requests,
-            client,
             record_controller,
         }
     }
@@ -94,12 +101,12 @@ impl grpc::cards_service_server::CardsService for CardsServiceState {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         info!("there have been {requests} requests");
 
-        let NewDecksRequest { decks } = match NewDecksRequest::try_from(request.into_inner()) {
+        let new_decks_request = match NewDecksRequest::try_from(request.into_inner()) {
             Ok(deck_request) => deck_request,
             Err(err) => return Err(tonic::Status::invalid_argument(err.to_string())),
         };
 
-        let deck_id = match self._new_deck(decks).await {
+        let deck_id = match self._new_deck(new_decks_request).await {
             Ok(deck_id) => deck_id,
             Err(err) => return Err(tonic::Status::internal(err.to_string())),
         };
@@ -119,16 +126,12 @@ impl grpc::cards_service_server::CardsService for CardsServiceState {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         info!("there have been {requests} requests");
 
-        let DrawCardsRequest {
-            deck_id,
-            count,
-            hands,
-        } = match DrawCardsRequest::try_from(request.into_inner()) {
+        let draw_cards_request = match DrawCardsRequest::try_from(request.into_inner()) {
             Ok(cards_request) => cards_request,
             Err(err) => return Err(tonic::Status::invalid_argument(err.to_string())),
         };
 
-        let hands = match self._draw_cards(deck_id, hands, count).await {
+        let hands = match self._draw_cards(draw_cards_request).await {
             Ok(hands) => hands,
             Err(err) => return Err(tonic::Status::internal(err.to_string())),
         };
@@ -163,8 +166,10 @@ enum DrawCardsError {
 
 impl CardsServiceState {
     #[tracing::instrument(skip(self))]
-    async fn _new_deck(&self, decks: usize) -> Result<DeckID, NewDeckError> {
-        let DeckInfo { deck_id, .. } = deck_of_cards::new_deck(self.client.clone(), decks).await?;
+    async fn _new_deck(&self, new_decks_request: NewDecksRequest) -> Result<DeckID, NewDeckError> {
+        let NewDecksRequest { decks } = new_decks_request;
+
+        let DeckInfo { deck_id, .. } = self.cards_client.new_deck(decks).await?;
 
         info!("created a new deck");
 
@@ -178,11 +183,15 @@ impl CardsServiceState {
     #[tracing::instrument(skip(self))]
     async fn _draw_cards(
         &self,
-        deck_id: DeckID,
-        hands: usize,
-        count: u8,
+        draw_cards_request: DrawCardsRequest,
     ) -> Result<Vec<DrawnCardsInfo>, DrawCardsError> {
-        let hands = draw_all_cards(self.client.clone(), deck_id, hands, count).await?;
+        let DrawCardsRequest {
+            deck_id,
+            hands,
+            count,
+        } = draw_cards_request;
+
+        let hands = self.draw_all_cards(deck_id, hands, count).await?;
 
         info!("drawn all cards");
 
@@ -192,8 +201,22 @@ impl CardsServiceState {
 
         Ok(hands)
     }
+
+    #[tracing::instrument(skip(self))]
+    async fn draw_all_cards(
+        &self,
+        deck_id: DeckID,
+        hands: usize,
+        count: u8,
+    ) -> Result<Vec<DrawnCardsInfo>, reqwest::Error> {
+        futures::stream::iter((0..hands).map(|_| self.cards_client.draw_cards(deck_id, count)))
+            .buffer_unordered(5)
+            .try_collect()
+            .await
+    }
 }
 
+#[derive(Debug)]
 struct NewDecksRequest {
     decks: usize,
 }
@@ -222,6 +245,7 @@ impl TryFrom<grpc::NewDecksRequest> for NewDecksRequest {
     }
 }
 
+#[derive(Debug)]
 struct DrawCardsRequest {
     deck_id: DeckID,
     hands: usize,
@@ -266,26 +290,6 @@ impl TryFrom<grpc::DrawCardsRequest> for DrawCardsRequest {
             count,
         })
     }
-}
-
-#[tracing::instrument(skip(client))]
-async fn draw_all_cards(
-    client: reqwest::Client,
-    deck_id: DeckID,
-    hands: usize,
-    count: u8,
-) -> Result<Vec<DrawnCardsInfo>, reqwest::Error> {
-    let mut stream = futures::stream::iter(
-        (0..hands).map(|_| deck_of_cards::draw_cards(client.clone(), deck_id, count)),
-    )
-    .buffer_unordered(3);
-
-    let mut hands = vec![];
-    while let Some(hand) = stream.next().await {
-        hands.push(hand?);
-    }
-
-    Ok(hands)
 }
 
 #[derive(Serialize, Deserialize)]

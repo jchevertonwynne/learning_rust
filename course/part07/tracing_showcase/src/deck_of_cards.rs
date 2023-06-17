@@ -1,45 +1,52 @@
 use std::fmt::{Debug, Display, Formatter};
 
 use reqwest::Client;
+use tracing::{span, Instrument, Level};
 use url::Url;
 
 use crate::grpc;
 
-#[tracing::instrument(skip(client))]
-pub async fn new_deck(client: Client, decks: usize) -> Result<DeckInfo, reqwest::Error> {
-    let deck_info: DeckInfo = client
-        .get(format!(
-            "https://deckofcardsapi.com/api/deck/new/shuffle/?deck_count={decks}"
-        ))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-
-    Ok(deck_info)
-}
-
-#[tracing::instrument(skip(client))]
-pub async fn draw_cards(
+pub struct DeckOfCardsClient {
+    base_url: Url,
     client: Client,
-    deck_id: DeckID,
-    n: u8,
-) -> Result<DrawnCardsInfo, reqwest::Error> {
-    client
-        .get(format!(
-            "https://deckofcardsapi.com/api/deck/{deck_id}/draw/?count={n}"
-        ))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("cards retrieved can't be zero")]
-pub struct CantBeZeroError;
+impl DeckOfCardsClient {
+    pub fn new(mut base_url: Url, client: Client) -> Self {
+        base_url.set_path("/");
+        Self { base_url, client }
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn new_deck(&self, decks: usize) -> Result<DeckInfo, reqwest::Error> {
+        let mut url = self.base_url.clone();
+        url.set_path(&format!("/api/deck/new/shuffle/?deck_count={decks}"));
+        self.client
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn draw_cards(
+        &self,
+        deck_id: DeckID,
+        n: u8,
+    ) -> Result<DrawnCardsInfo, reqwest::Error> {
+        let mut url = self.base_url.clone();
+        url.set_path(&format!("/api/deck/{deck_id}/draw/?count={n}"));
+        let resp = async { self.client.get(url).send().await }
+            .instrument(span!(Level::INFO, "sending request"))
+            .await?;
+
+        async { resp.error_for_status()?.json().await }
+            .instrument(span!(Level::INFO, "parsing json response"))
+            .await
+    }
+}
 
 #[derive(Copy, Clone)]
 pub struct DeckID([u8; 12]);
