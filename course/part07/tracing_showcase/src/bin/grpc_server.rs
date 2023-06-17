@@ -9,34 +9,14 @@ use mongodb::bson::doc;
 use mongodb::options::UpdateModifications;
 use serde::{Deserialize, Serialize};
 use tracing::info;
-use tracing_showcase::deck_of_cards::{DeckOfCardsClient, DrawnCardsInfo};
 use tracing_showcase::deck_of_cards::{DeckID, DeckInfo};
-use tracing_showcase::grpc;
-use tracing_subscriber::filter::LevelFilter;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{EnvFilter, Registry};
+use tracing_showcase::deck_of_cards::{DeckOfCardsClient, DrawnCardsInfo};
+use tracing_showcase::{grpc, init_tracing};
 use url::Url;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    Registry::default()
-        .with(
-            EnvFilter::builder()
-                .with_default_directive(LevelFilter::INFO.into())
-                .from_env_lossy(),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .with(
-            tracing_opentelemetry::layer().with_tracer(
-                opentelemetry_jaeger::new_agent_pipeline()
-                    .with_service_name("tracing_showcase")
-                    .with_max_packet_size(8192)
-                    .with_auto_split_batch(true)
-                    .install_batch(opentelemetry::runtime::Tokio)?,
-            ),
-        )
-        .init();
+    init_tracing("grpc_server")?;
 
     info!("starting grpc server...");
 
@@ -150,7 +130,7 @@ impl grpc::cards_service_server::CardsService for CardsServiceState {
 
 #[derive(Debug, thiserror::Error)]
 enum NewDeckError {
-    #[error("failed to draw cards: {0}")]
+    #[error("failed to draw deck: {0}")]
     ReqwestError(#[from] reqwest::Error),
     #[error("failed to update mongo: {0}")]
     MongoError(#[from] mongodb::error::Error),

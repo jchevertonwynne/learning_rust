@@ -1,7 +1,7 @@
+use rand::seq::SliceRandom;
 use std::fmt::{Debug, Display, Formatter};
 
 use reqwest::Client;
-use tracing::{span, Instrument, Level};
 use url::Url;
 
 use crate::grpc;
@@ -20,7 +20,8 @@ impl DeckOfCardsClient {
     #[tracing::instrument(skip(self))]
     pub async fn new_deck(&self, decks: usize) -> Result<DeckInfo, reqwest::Error> {
         let mut url = self.base_url.clone();
-        url.set_path(&format!("/api/deck/new/shuffle/?deck_count={decks}"));
+        url.set_path("/api/deck/new/shuffle/");
+        url.set_query(Some(&format!("deck_count={decks}")));
         self.client
             .get(url)
             .send()
@@ -37,19 +38,31 @@ impl DeckOfCardsClient {
         n: u8,
     ) -> Result<DrawnCardsInfo, reqwest::Error> {
         let mut url = self.base_url.clone();
-        url.set_path(&format!("/api/deck/{deck_id}/draw/?count={n}"));
-        let resp = async { self.client.get(url).send().await }
-            .instrument(span!(Level::INFO, "sending request"))
-            .await?;
-
-        async { resp.error_for_status()?.json().await }
-            .instrument(span!(Level::INFO, "parsing json response"))
+        url.set_path(&format!("/api/deck/{deck_id}/draw/"));
+        url.set_query(Some(&format!("count={n}")));
+        self.client
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
             .await
     }
 }
 
 #[derive(Copy, Clone)]
 pub struct DeckID([u8; 12]);
+
+impl DeckID {
+    pub fn random() -> Self {
+        let chars = b"0123456789qwertyuiopasdfghjklzxcvbnm";
+        DeckID(std::array::from_fn(|_| {
+            *chars
+                .choose(&mut rand::thread_rng())
+                .expect("slice is non empty")
+        }))
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 #[error("deck ID must be 12 lowercase letters or numbers")]
@@ -131,22 +144,22 @@ impl<'de> serde::Deserialize<'de> for DeckID {
     }
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, Clone)]
 pub struct DeckInfo {
     pub success: bool,
     pub deck_id: DeckID,
     pub shuffled: bool,
-    pub remaining: u8,
+    pub remaining: usize,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, Clone)]
 pub struct DrawnCardsInfo {
     pub success: bool,
     pub deck_id: DeckID,
     pub cards: Box<[Card]>,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, Clone)]
 pub struct Card {
     pub code: Code,
     pub image: Url,
@@ -166,7 +179,7 @@ impl<'a> From<&'a Card> for grpc::Card {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Code {
     pub value: Value,
     pub suit: Suit,
@@ -279,13 +292,13 @@ impl<'de> serde::Deserialize<'de> for Code {
     }
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, Clone)]
 pub struct Images {
     pub svg: Url,
     pub png: Url,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, Clone, Copy, strum_macros::EnumIter)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum Value {
     Ace,
@@ -344,7 +357,7 @@ impl<'a> From<&'a Value> for grpc::Value {
     }
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize, Clone, Copy, strum_macros::EnumIter)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum Suit {
     Clubs,
