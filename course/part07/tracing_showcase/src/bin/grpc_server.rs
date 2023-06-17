@@ -1,5 +1,7 @@
 // docker run -d -p6831:6831/udp -p6832:6832/udp -p16686:16686 -p14268:14268 jaegertracing/all-in-one:latest
 
+// DECK_OF_CARDS_URL=http://localhost:25566 to use fake deck of cards api
+
 use std::sync::atomic::AtomicUsize;
 
 use async_trait::async_trait;
@@ -273,27 +275,31 @@ impl TryFrom<grpc::DrawCardsRequest> for DrawCardsRequest {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Record {
+struct InteractionRecord {
     deck_id: String,
     count: usize,
 }
 
 struct MongoRecordController {
-    collection: mongodb::Collection<Record>,
+    interactions: mongodb::Collection<InteractionRecord>,
 }
 
 impl MongoRecordController {
     fn new(client: &mongodb::Client) -> Self {
-        let collection = client.database("joseph").collection("testing");
-        Self { collection }
+        let collection = client
+            .database("tracing_showcase")
+            .collection("interactions");
+        Self {
+            interactions: collection,
+        }
     }
 
     #[tracing::instrument(skip(self))]
     async fn create(&self, deck_id: DeckID) -> mongodb::error::Result<()> {
         info!("creating a new record");
-        self.collection
+        self.interactions
             .insert_one(
-                Record {
+                InteractionRecord {
                     deck_id: deck_id.to_string(),
                     count: 0,
                 },
@@ -306,7 +312,7 @@ impl MongoRecordController {
     #[tracing::instrument(skip(self))]
     async fn increment_count(&self, deck_id: DeckID) -> mongodb::error::Result<()> {
         info!("incrementing count");
-        self.collection
+        self.interactions
             .update_one(
                 doc! { "deck_id": deck_id.to_string() },
                 UpdateModifications::Document(doc! { "$inc": { "count": 1 } }),

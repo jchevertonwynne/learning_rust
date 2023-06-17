@@ -59,7 +59,7 @@ struct AppState {
 impl AppState {
     fn new(client: &mongodb::Client) -> Self {
         Self {
-            decks_collection: client.database("deck_of_cards").collection("decks"),
+            decks_collection: client.database("tracing_showcase").collection("decks"),
         }
     }
 
