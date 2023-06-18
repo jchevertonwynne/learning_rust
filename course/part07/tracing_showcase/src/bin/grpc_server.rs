@@ -4,7 +4,12 @@
 
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::SeqCst;
+use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use async_trait::async_trait;
 use futures::{FutureExt, StreamExt, TryStreamExt};
@@ -13,7 +18,11 @@ use mongodb::bson::doc;
 use mongodb::options::UpdateModifications;
 
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tonic::codegen::Service;
+use tonic::metadata::MetadataMap;
+use tower::Layer;
+use tracing::instrument::Instrumented;
+use tracing::{info, info_span, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_showcase::deck_of_cards::{DeckID, DeckInfo};
 use tracing_showcase::deck_of_cards::{DeckOfCardsClient, DrawnCardsInfo};
@@ -39,7 +48,9 @@ async fn main() -> anyhow::Result<()> {
     )?;
     let cards_client = DeckOfCardsClient::new(url, client);
 
-    let service = CardsServiceState::new(cards_client, record_controller);
+    let counter = Arc::new(AtomicUsize::new(0));
+
+    let service = CardsServiceState::new(cards_client, record_controller, counter.clone());
 
     let addr = ([127, 0, 0, 1], 25565).into();
 
@@ -47,7 +58,8 @@ async fn main() -> anyhow::Result<()> {
 
     let shutdown = tokio::signal::ctrl_c().map(|_| ());
     let s = tonic::transport::Server::builder()
-        .layer(tonic::service::interceptor(intercept))
+        .layer(RequestCounterLayer::new(counter))
+        .layer(TracingContextPropagatorLayer::new())
         .add_service(CardsServiceServer::new(service));
 
     s.serve_with_shutdown(addr, shutdown).await?;
@@ -59,44 +71,161 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn intercept(mut req: tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status> {
-    let Some(parent_ctx) = req.metadata().get("tracing-parent-context") else {
-        return Ok(req);
-    };
+#[derive(Debug, Clone)]
+struct RequestCounterLayer {
+    counter: Arc<AtomicUsize>,
+}
 
-    let parent_ctx = match parent_ctx.to_str() {
-        Ok(parent_ctx) => parent_ctx,
-        Err(err) => return Err(tonic::Status::internal(err.to_string())),
-    };
+impl RequestCounterLayer {
+    fn new(counter: Arc<AtomicUsize>) -> Self {
+        Self { counter }
+    }
+}
 
-    let parent_ctx = match serde_json::from_str::<HashMap<String, String>>(parent_ctx) {
-        Ok(parent_ctx) => parent_ctx,
-        Err(err) => return Err(tonic::Status::internal(err.to_string())),
-    };
+impl<S> Layer<S> for RequestCounterLayer {
+    type Service = RequestCounterService<S>;
 
-    let parent_ctx = opentelemetry::global::get_text_map_propagator(|propagator| {
-        propagator.extract(&parent_ctx)
-    });
+    fn layer(&self, inner: S) -> Self::Service {
+        let counter = Arc::clone(&self.counter);
+        Self::Service { counter, inner }
+    }
+}
 
-    req.extensions_mut().insert(ParentContext(parent_ctx));
+#[derive(Debug, Clone)]
+struct RequestCounterService<S> {
+    counter: Arc<AtomicUsize>,
+    inner: S,
+}
 
-    Ok(req)
+impl<S, I> Service<S> for RequestCounterService<I>
+where
+    I: Service<S>,
+{
+    type Response = I::Response;
+    type Error = I::Error;
+    type Future = I::Future;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: S) -> Self::Future {
+        self.counter.fetch_add(1, SeqCst);
+        self.inner.call(req)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct TracingContextPropagatorLayer {}
+
+impl TracingContextPropagatorLayer {
+    fn new() -> Self {
+        TracingContextPropagatorLayer {}
+    }
+}
+
+impl<S> Layer<S> for TracingContextPropagatorLayer {
+    type Service = TracingContextPropagatorService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        TracingContextPropagatorService { inner }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TracingContextPropagatorService<S> {
+    inner: S,
+}
+
+impl<S, ReqBody, ResBody> Service<http::Request<ReqBody>> for TracingContextPropagatorService<S>
+where
+    S: Service<http::Request<ReqBody>, Response = http::Response<ResBody>>,
+    ResBody: Default,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = InterceptorFut<S::Future>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: http::Request<ReqBody>) -> Self::Future {
+        let metadata = MetadataMap::from_headers(req.headers().clone());
+
+        let Some(parent_ctx) = metadata.get("tracing-parent-context") else {
+            return InterceptorFut::Fut(self.inner.call(req));
+        };
+
+        let parent_ctx_str = match parent_ctx.to_str() {
+            Ok(parent_ctx) => parent_ctx,
+            Err(err) => return InterceptorFut::Status(tonic::Status::internal(err.to_string())),
+        };
+
+        let parent_ctx_map = match serde_json::from_str::<HashMap<String, String>>(parent_ctx_str) {
+            Ok(parent_ctx) => parent_ctx,
+            Err(err) => return InterceptorFut::Status(tonic::Status::internal(err.to_string())),
+        };
+
+        let parent_ctx = opentelemetry::global::get_text_map_propagator(|propagator| {
+            propagator.extract(&parent_ctx_map)
+        });
+
+        let span = info_span!("handling a request", uri = %req.uri());
+        span.set_parent(parent_ctx);
+
+        InterceptorFut::FutInstrumented(Instrument::instrument(self.inner.call(req), span))
+    }
+}
+
+enum InterceptorFut<F> {
+    Status(tonic::Status),
+    FutInstrumented(Instrumented<F>),
+    Fut(F),
+    Consumed,
+}
+
+impl<F, ResBody, E> Future for InterceptorFut<F>
+where
+    F: Future<Output = Result<http::Response<ResBody>, E>>,
+    ResBody: Default,
+{
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = unsafe { self.get_unchecked_mut() };
+
+        match this {
+            InterceptorFut::Status(s) => {
+                let s = std::mem::replace(s, tonic::Status::internal(""));
+                drop(std::mem::replace(this, InterceptorFut::Consumed));
+                let (p, _) = s.to_http().into_parts();
+                Poll::Ready(Ok(http::Response::from_parts(p, ResBody::default())))
+            }
+            InterceptorFut::FutInstrumented(f) => unsafe { Pin::new_unchecked(f) }.poll(cx),
+            InterceptorFut::Fut(f) => unsafe { Pin::new_unchecked(f) }.poll(cx),
+            InterceptorFut::Consumed => panic!("please dont poll me again"),
+        }
+    }
 }
 
 struct ParentContext(opentelemetry::Context);
 
 struct CardsServiceState {
     cards_client: DeckOfCardsClient,
-    requests: AtomicUsize,
+    counter: Arc<AtomicUsize>,
     record_controller: MongoRecordController,
 }
 
 impl CardsServiceState {
-    fn new(cards_client: DeckOfCardsClient, record_controller: MongoRecordController) -> Self {
-        let requests = AtomicUsize::default();
+    fn new(
+        cards_client: DeckOfCardsClient,
+        record_controller: MongoRecordController,
+        counter: Arc<AtomicUsize>,
+    ) -> Self {
         Self {
             cards_client,
-            requests,
+            counter,
             record_controller,
         }
     }
@@ -109,9 +238,7 @@ impl grpc::cards_service_server::CardsService for CardsServiceState {
         &self,
         mut request: tonic::Request<grpc::NewDecksRequest>,
     ) -> Result<tonic::Response<grpc::NewDecksResponse>, tonic::Status> {
-        let requests = 1 + self
-            .requests
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let requests = self.counter.load(SeqCst);
         info!("there have been {requests} requests");
 
         if let Some(ParentContext(ctx)) = request.extensions_mut().remove::<ParentContext>() {
@@ -138,9 +265,7 @@ impl grpc::cards_service_server::CardsService for CardsServiceState {
         &self,
         mut request: tonic::Request<grpc::DrawCardsRequest>,
     ) -> Result<tonic::Response<grpc::DrawCardsResponse>, tonic::Status> {
-        let requests = 1 + self
-            .requests
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let requests = self.counter.load(SeqCst);
         info!("there have been {requests} requests");
 
         if let Some(ParentContext(ctx)) = request.extensions_mut().remove::<ParentContext>() {
