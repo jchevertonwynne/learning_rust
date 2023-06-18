@@ -29,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
         .await?
         .into_inner();
 
-    let _drawn_hands = client
+    let drawn_hands = client
         .draw_cards(DrawCardsRequest {
             deck_id: decks.deck_id.clone(),
             count: 4,
@@ -39,9 +39,13 @@ async fn main() -> anyhow::Result<()> {
         .await?
         .into_inner();
 
-    // for hand in drawn_hands.hands {
-    //     println!("{hand:#?}");
-    // }
+    let cards = drawn_hands
+        .hands
+        .iter()
+        .flat_map(|hand| hand.cards.iter())
+        .count();
+
+    info!("retrieved {cards} cards");
 
     entered.exit();
 
@@ -60,17 +64,17 @@ fn intercept(mut req: tonic::Request<()>) -> Result<tonic::Request<()>, tonic::S
         propagator.inject_context(&ctx, &mut propagation_ctx);
         propagation_ctx
     });
-
+    
     let ctx_str = match serde_json::to_string(&ctx_map) {
         Ok(ctx_str) => ctx_str,
         Err(err) => return Err(tonic::Status::internal(err.to_string())),
     };
-
+    
     let ctx_str: MetadataValue<Ascii> = match ctx_str.try_into() {
         Ok(ctx_str) => ctx_str,
         Err(err) => return Err(tonic::Status::internal(err.to_string())),
     };
-
+    
     req.metadata_mut().insert("tracing-parent-context", ctx_str);
 
     Ok(req)

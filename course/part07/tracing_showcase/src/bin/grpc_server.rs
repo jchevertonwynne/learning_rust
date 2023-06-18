@@ -16,6 +16,7 @@ use futures::{FutureExt, StreamExt, TryStreamExt};
 use grpc::cards_service_server::CardsServiceServer;
 use mongodb::bson::doc;
 use mongodb::options::UpdateModifications;
+use pin_project::pin_project;
 
 use serde::{Deserialize, Serialize};
 use tonic::codegen::Service;
@@ -49,8 +50,9 @@ async fn main() -> anyhow::Result<()> {
     let cards_client = DeckOfCardsClient::new(url, client);
 
     let counter = Arc::new(AtomicUsize::new(0));
+    let counter_success = Arc::new(AtomicUsize::new(0));
 
-    let service = CardsServiceState::new(cards_client, record_controller, counter.clone());
+    let service = CardsServiceState::new(cards_client, record_controller);
 
     let addr = ([127, 0, 0, 1], 25565).into();
 
@@ -58,7 +60,10 @@ async fn main() -> anyhow::Result<()> {
 
     let shutdown = tokio::signal::ctrl_c().map(|_| ());
     tonic::transport::Server::builder()
-        .layer(RequestCounterLayer::new(counter))
+        .layer(RequestCounterLayer::new(
+            counter,
+            Arc::clone(&counter_success),
+        ))
         .layer(TracingContextPropagatorLayer::new())
         .add_service(CardsServiceServer::new(service))
         .serve_with_shutdown(addr, shutdown)
@@ -74,11 +79,15 @@ async fn main() -> anyhow::Result<()> {
 #[derive(Debug, Clone)]
 struct RequestCounterLayer {
     counter: Arc<AtomicUsize>,
+    counter_success: Arc<AtomicUsize>,
 }
 
 impl RequestCounterLayer {
-    fn new(counter: Arc<AtomicUsize>) -> Self {
-        Self { counter }
+    fn new(counter: Arc<AtomicUsize>, counter_success: Arc<AtomicUsize>) -> Self {
+        Self {
+            counter,
+            counter_success,
+        }
     }
 }
 
@@ -87,23 +96,29 @@ impl<S> Layer<S> for RequestCounterLayer {
 
     fn layer(&self, inner: S) -> Self::Service {
         let counter = Arc::clone(&self.counter);
-        Self::Service { counter, inner }
+        let counter_success = Arc::clone(&self.counter_success);
+        Self::Service {
+            counter,
+            counter_success,
+            inner,
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 struct RequestCounterService<S> {
     counter: Arc<AtomicUsize>,
+    counter_success: Arc<AtomicUsize>,
     inner: S,
 }
 
-impl<S, T> Service<T> for RequestCounterService<S>
+impl<S, T, RespBody> Service<T> for RequestCounterService<S>
 where
-    S: Service<T>,
+    S: Service<T, Response = http::Response<RespBody>>,
 {
     type Response = S::Response;
     type Error = S::Error;
-    type Future = S::Future;
+    type Future = RequestCounterFut<S::Future>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
@@ -111,7 +126,56 @@ where
 
     fn call(&mut self, req: T) -> Self::Future {
         self.counter.fetch_add(1, SeqCst);
-        self.inner.call(req)
+        RequestCounterFut {
+            counter: self.counter.clone(),
+            counter_success: self.counter_success.clone(),
+            fut: self.inner.call(req),
+        }
+    }
+}
+
+#[pin_project]
+struct RequestCounterFut<F> {
+    counter: Arc<AtomicUsize>,
+    counter_success: Arc<AtomicUsize>,
+    #[pin]
+    fut: F,
+}
+
+impl<F, T, U> Future for RequestCounterFut<F>
+where
+    F: Future<Output = Result<http::Response<T>, U>>,
+{
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        let resp = this.fut.poll(cx);
+        if let Poll::Ready(rdy) = &resp {
+            if let Ok(resp) = rdy {
+                info!("status = {}", resp.status());
+                info!("headers = {:?}", resp.headers());
+
+                if let Some(content_type) = resp.headers().get("content-type") {
+                    if content_type == "application/grpc" {
+                        if let Some(grpc_status) = resp.headers().get("grpc-status") {
+                            if grpc_status == "0" {
+                                this.counter_success.fetch_add(1, SeqCst);
+                            }
+                        } else {
+                            this.counter_success.fetch_add(1, SeqCst);
+                        }
+                    } else if resp.status().is_success() {
+                        this.counter_success.fetch_add(1, SeqCst);
+                    }
+                }
+            }
+
+            let requests_count = this.counter.load(SeqCst);
+            let requests_success_count = this.counter_success.load(SeqCst);
+            info!("{requests_success_count}/{requests_count} requests have been successful");
+        }
+        resp
     }
 }
 
@@ -160,12 +224,20 @@ where
 
         let parent_ctx_str = match parent_ctx.to_str() {
             Ok(parent_ctx) => parent_ctx,
-            Err(err) => return InterceptorFut::Status(tonic::Status::internal(err.to_string())),
+            Err(err) => {
+                return InterceptorFut::Status(tonic::Status::internal(format!(
+                    "failed to convert ascii string to str: {err}"
+                )))
+            }
         };
 
         let parent_ctx_map = match serde_json::from_str::<HashMap<String, String>>(parent_ctx_str) {
             Ok(parent_ctx) => parent_ctx,
-            Err(err) => return InterceptorFut::Status(tonic::Status::internal(err.to_string())),
+            Err(err) => {
+                return InterceptorFut::Status(tonic::Status::internal(format!(
+                    "failed to parse parent ctx json: {err}"
+                )))
+            }
         };
 
         // put headers back now that we're done with them
@@ -229,19 +301,13 @@ struct ParentContext(opentelemetry::Context);
 
 struct CardsServiceState {
     cards_client: DeckOfCardsClient,
-    counter: Arc<AtomicUsize>,
     record_controller: MongoRecordController,
 }
 
 impl CardsServiceState {
-    fn new(
-        cards_client: DeckOfCardsClient,
-        record_controller: MongoRecordController,
-        counter: Arc<AtomicUsize>,
-    ) -> Self {
+    fn new(cards_client: DeckOfCardsClient, record_controller: MongoRecordController) -> Self {
         Self {
             cards_client,
-            counter,
             record_controller,
         }
     }
@@ -254,9 +320,6 @@ impl grpc::cards_service_server::CardsService for CardsServiceState {
         &self,
         mut request: tonic::Request<grpc::NewDecksRequest>,
     ) -> Result<tonic::Response<grpc::NewDecksResponse>, tonic::Status> {
-        let requests = self.counter.load(SeqCst);
-        info!("there have been {requests} requests");
-
         if let Some(ParentContext(ctx)) = request.extensions_mut().remove::<ParentContext>() {
             tracing::Span::current().set_parent(ctx);
         }
@@ -281,9 +344,6 @@ impl grpc::cards_service_server::CardsService for CardsServiceState {
         &self,
         mut request: tonic::Request<grpc::DrawCardsRequest>,
     ) -> Result<tonic::Response<grpc::DrawCardsResponse>, tonic::Status> {
-        let requests = self.counter.load(SeqCst);
-        info!("there have been {requests} requests");
-
         if let Some(ParentContext(ctx)) = request.extensions_mut().remove::<ParentContext>() {
             tracing::Span::current().set_parent(ctx);
         }
