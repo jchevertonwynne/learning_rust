@@ -5,7 +5,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use futures::FutureExt;
 use mongodb::bson::doc;
-use mongodb::Collection;
+use mongodb::{Collection, IndexModel};
 use rand::seq::SliceRandom;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -22,10 +22,11 @@ use url::Url;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let _cleanup = init_tracing("fake deck of cards api")?;
+    init_tracing("fake deck of cards api")?;
 
     let mongo_client = mongodb::Client::with_uri_str("mongodb://localhost:27017").await?;
     let app_state = AppState::new(&mongo_client);
+    app_state.ready_database().await?;
 
     info!("connected to mongo...");
 
@@ -48,6 +49,8 @@ async fn main() -> anyhow::Result<()> {
 
     server.await?;
 
+    opentelemetry::global::shutdown_tracer_provider();
+
     Ok(())
 }
 
@@ -61,6 +64,18 @@ impl AppState {
         Self {
             decks_collection: client.database("tracing_showcase").collection("decks"),
         }
+    }
+
+    #[instrument]
+    async fn ready_database(&self) -> Result<(), mongodb::error::Error> {
+        self.decks_collection.drop(None).await?;
+        self.decks_collection
+            .create_index(
+                IndexModel::builder().keys(doc! {"deck_id": 1}).build(),
+                None,
+            )
+            .await?;
+        Ok(())
     }
 
     #[instrument(skip(self))]

@@ -10,7 +10,7 @@ pub mod grpc {
     tonic::include_proto!("cards");
 }
 
-pub fn init_tracing(service_name: &str) -> Result<TracingCleanup, TracingSetupError> {
+pub fn init_tracing(service_name: &str) -> Result<(), TracingSetupError> {
     opentelemetry::global::set_text_map_propagator(opentelemetry_jaeger::Propagator::new());
 
     Registry::default()
@@ -31,15 +31,7 @@ pub fn init_tracing(service_name: &str) -> Result<TracingCleanup, TracingSetupEr
         )
         .try_init()?;
 
-    Ok(TracingCleanup {})
-}
-
-pub struct TracingCleanup {}
-
-impl Drop for TracingCleanup {
-    fn drop(&mut self) {
-        opentelemetry::global::shutdown_tracer_provider()
-    }
+    Ok(())
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -11,7 +11,7 @@ use tracing_showcase::{grpc, init_tracing};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let _cleanup = init_tracing("grpc caller")?;
+    init_tracing("grpc caller")?;
 
     let span = info_span!("being a client");
     let _enter = span.enter();
@@ -50,6 +50,8 @@ async fn main() -> anyhow::Result<()> {
     for hand in drawn_hands.hands {
         println!("{hand:#?}");
     }
+
+    opentelemetry::global::shutdown_tracer_provider();
 
     Ok(())
 }

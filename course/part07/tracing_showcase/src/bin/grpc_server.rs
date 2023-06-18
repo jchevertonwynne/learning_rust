@@ -22,7 +22,7 @@ use url::Url;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    let _cleanup = init_tracing("grpc server")?;
+    init_tracing("grpc server")?;
 
     info!("starting grpc server...");
 
@@ -51,7 +51,9 @@ async fn main() -> anyhow::Result<()> {
         .serve_with_shutdown(addr, shutdown)
         .await?;
 
-    info!("this is another log!");
+    info!("goodbye!");
+
+    opentelemetry::global::shutdown_tracer_provider();
 
     Ok(())
 }
