@@ -14,7 +14,6 @@ use std::task::{Context, Poll};
 use async_trait::async_trait;
 use futures::{FutureExt, StreamExt, TryStreamExt};
 use grpc::cards_service_server::CardsServiceServer;
-use http::HeaderMap;
 use mongodb::bson::doc;
 use mongodb::options::UpdateModifications;
 
@@ -58,12 +57,12 @@ async fn main() -> anyhow::Result<()> {
     info!("serving on {addr}");
 
     let shutdown = tokio::signal::ctrl_c().map(|_| ());
-    let s = tonic::transport::Server::builder()
+    tonic::transport::Server::builder()
         .layer(RequestCounterLayer::new(counter))
         .layer(TracingContextPropagatorLayer::new())
-        .add_service(CardsServiceServer::new(service));
-
-    s.serve_with_shutdown(addr, shutdown).await?;
+        .add_service(CardsServiceServer::new(service))
+        .serve_with_shutdown(addr, shutdown)
+        .await?;
 
     info!("goodbye!");
 
@@ -98,19 +97,19 @@ struct RequestCounterService<S> {
     inner: S,
 }
 
-impl<S, I> Service<S> for RequestCounterService<I>
+impl<S, T> Service<T> for RequestCounterService<S>
 where
-    I: Service<S>,
+    S: Service<T>,
 {
-    type Response = I::Response;
-    type Error = I::Error;
-    type Future = I::Future;
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = S::Future;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: S) -> Self::Future {
+    fn call(&mut self, req: T) -> Self::Future {
         self.counter.fetch_add(1, SeqCst);
         self.inner.call(req)
     }
@@ -207,9 +206,21 @@ where
                 let (p, _) = s.to_http().into_parts();
                 Poll::Ready(Ok(http::Response::from_parts(p, ResBody::default())))
             }
-            InterceptorFut::FutInstrumented(f) => unsafe { Pin::new_unchecked(f) }.poll(cx),
-            InterceptorFut::Fut(f) => unsafe { Pin::new_unchecked(f) }.poll(cx),
-            InterceptorFut::Consumed => panic!("please dont poll me again"),
+            InterceptorFut::FutInstrumented(f) => {
+                let r = unsafe { Pin::new_unchecked(f) }.poll(cx);
+                if r.is_ready() {
+                    drop(std::mem::replace(this, InterceptorFut::Consumed));
+                }
+                r
+            }
+            InterceptorFut::Fut(f) => {
+                let r = unsafe { Pin::new_unchecked(f) }.poll(cx);
+                if r.is_ready() {
+                    drop(std::mem::replace(this, InterceptorFut::Consumed));
+                }
+                r
+            }
+            InterceptorFut::Consumed => panic!("polled InterceptorFut when already consumed"),
         }
     }
 }
