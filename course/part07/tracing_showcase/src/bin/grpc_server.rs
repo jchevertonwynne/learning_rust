@@ -281,8 +281,6 @@ where
     }
 }
 
-struct ParentContext(opentelemetry::Context);
-
 struct CardsServiceState {
     cards_client: DeckOfCardsClient,
     record_controller: MongoRecordController,
@@ -302,12 +300,8 @@ impl grpc::cards_service_server::CardsService for CardsServiceState {
     #[tracing::instrument(skip(self, request))]
     async fn new_decks(
         &self,
-        mut request: tonic::Request<grpc::NewDecksRequest>,
+        request: tonic::Request<grpc::NewDecksRequest>,
     ) -> Result<tonic::Response<grpc::NewDecksResponse>, tonic::Status> {
-        if let Some(ParentContext(ctx)) = request.extensions_mut().remove::<ParentContext>() {
-            tracing::Span::current().set_parent(ctx);
-        }
-
         let new_decks_request = match NewDecksRequest::try_from(request.into_inner()) {
             Ok(deck_request) => deck_request,
             Err(err) => return Err(tonic::Status::invalid_argument(err.to_string())),
@@ -326,12 +320,8 @@ impl grpc::cards_service_server::CardsService for CardsServiceState {
     #[tracing::instrument(skip(self, request))]
     async fn draw_cards(
         &self,
-        mut request: tonic::Request<grpc::DrawCardsRequest>,
+        request: tonic::Request<grpc::DrawCardsRequest>,
     ) -> Result<tonic::Response<grpc::DrawCardsResponse>, tonic::Status> {
-        if let Some(ParentContext(ctx)) = request.extensions_mut().remove::<ParentContext>() {
-            tracing::Span::current().set_parent(ctx);
-        }
-
         let draw_cards_request = match DrawCardsRequest::try_from(request.into_inner()) {
             Ok(cards_request) => cards_request,
             Err(err) => return Err(tonic::Status::invalid_argument(err.to_string())),
