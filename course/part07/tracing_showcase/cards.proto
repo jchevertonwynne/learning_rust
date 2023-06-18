@@ -8,7 +8,6 @@ service CardsService {
 
 message NewDecksRequest {
   int32 decks = 1;
-  string ctx = 2;
 }
 
 message NewDecksResponse {
@@ -19,7 +18,6 @@ message DrawCardsRequest {
   string deck_id = 1;
   int32 count = 2;
   int32 hands = 3;
-  string ctx = 4;
 }
 
 message DrawCardsResponse {

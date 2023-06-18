@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::net::ToSocketAddrs;
 use std::str::FromStr;
 use std::time::Duration;
+
 use strum::IntoEnumIterator;
 use tracing::{info, info_span, instrument};
 use tracing_showcase::deck_of_cards::{

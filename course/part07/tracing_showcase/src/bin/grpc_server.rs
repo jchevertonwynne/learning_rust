@@ -11,7 +11,7 @@ use futures::{FutureExt, StreamExt, TryStreamExt};
 use grpc::cards_service_server::CardsServiceServer;
 use mongodb::bson::doc;
 use mongodb::options::UpdateModifications;
-use opentelemetry::propagation::Extractor;
+
 use serde::{Deserialize, Serialize};
 use tracing::info;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -46,10 +46,11 @@ async fn main() -> anyhow::Result<()> {
     info!("serving on {addr}");
 
     let shutdown = tokio::signal::ctrl_c().map(|_| ());
-    tonic::transport::Server::builder()
-        .add_service(CardsServiceServer::new(service))
-        .serve_with_shutdown(addr, shutdown)
-        .await?;
+    let s = tonic::transport::Server::builder()
+        .layer(tonic::service::interceptor(intercept))
+        .add_service(CardsServiceServer::new(service));
+
+    s.serve_with_shutdown(addr, shutdown).await?;
 
     info!("goodbye!");
 
@@ -57,6 +58,32 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+fn intercept(mut req: tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status> {
+    let Some(parent_ctx) = req.metadata().get("tracing-parent-context") else {
+        return Ok(req);
+    };
+
+    let parent_ctx = match parent_ctx.to_str() {
+        Ok(parent_ctx) => parent_ctx,
+        Err(err) => return Err(tonic::Status::internal(err.to_string())),
+    };
+
+    let parent_ctx = match serde_json::from_str::<HashMap<String, String>>(parent_ctx) {
+        Ok(parent_ctx) => parent_ctx,
+        Err(err) => return Err(tonic::Status::internal(err.to_string())),
+    };
+
+    let parent_ctx = opentelemetry::global::get_text_map_propagator(|propagator| {
+        propagator.extract(&parent_ctx)
+    });
+
+    req.extensions_mut().insert(ParentContext(parent_ctx));
+
+    Ok(req)
+}
+
+struct ParentContext(opentelemetry::Context);
 
 struct CardsServiceState {
     cards_client: DeckOfCardsClient,
@@ -80,21 +107,21 @@ impl grpc::cards_service_server::CardsService for CardsServiceState {
     #[tracing::instrument(skip(self, request))]
     async fn new_decks(
         &self,
-        request: tonic::Request<grpc::NewDecksRequest>,
+        mut request: tonic::Request<grpc::NewDecksRequest>,
     ) -> Result<tonic::Response<grpc::NewDecksResponse>, tonic::Status> {
         let requests = 1 + self
             .requests
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         info!("there have been {requests} requests");
 
-        let WithContext::<NewDecksRequest> {
-            thing: new_decks_request,
-            ctx,
-        } = match WithContext::<NewDecksRequest>::try_from(request.into_inner()) {
+        if let Some(ParentContext(ctx)) = request.extensions_mut().remove::<ParentContext>() {
+            tracing::Span::current().set_parent(ctx);
+        }
+
+        let new_decks_request = match NewDecksRequest::try_from(request.into_inner()) {
             Ok(deck_request) => deck_request,
             Err(err) => return Err(tonic::Status::invalid_argument(err.to_string())),
         };
-        tracing::Span::current().set_parent(ctx);
 
         let deck_id = match self._new_deck(new_decks_request).await {
             Ok(deck_id) => deck_id,
@@ -109,21 +136,21 @@ impl grpc::cards_service_server::CardsService for CardsServiceState {
     #[tracing::instrument(skip(self, request))]
     async fn draw_cards(
         &self,
-        request: tonic::Request<grpc::DrawCardsRequest>,
+        mut request: tonic::Request<grpc::DrawCardsRequest>,
     ) -> Result<tonic::Response<grpc::DrawCardsResponse>, tonic::Status> {
         let requests = 1 + self
             .requests
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         info!("there have been {requests} requests");
 
-        let WithContext::<DrawCardsRequest> {
-            thing: draw_cards_request,
-            ctx,
-        } = match WithContext::<DrawCardsRequest>::try_from(request.into_inner()) {
+        if let Some(ParentContext(ctx)) = request.extensions_mut().remove::<ParentContext>() {
+            tracing::Span::current().set_parent(ctx);
+        }
+
+        let draw_cards_request = match DrawCardsRequest::try_from(request.into_inner()) {
             Ok(cards_request) => cards_request,
             Err(err) => return Err(tonic::Status::invalid_argument(err.to_string())),
         };
-        tracing::Span::current().set_parent(ctx);
 
         let hands = match self._draw_cards(draw_cards_request).await {
             Ok(hands) => hands,
@@ -213,11 +240,6 @@ impl CardsServiceState {
     }
 }
 
-struct WithContext<T> {
-    thing: T,
-    ctx: opentelemetry::Context,
-}
-
 #[derive(Debug)]
 struct NewDecksRequest {
     decks: usize,
@@ -231,17 +253,11 @@ enum NewDecksRequestValidationError {
     TraceContextParse(#[from] serde_json::Error),
 }
 
-impl TryFrom<grpc::NewDecksRequest> for WithContext<NewDecksRequest> {
+impl TryFrom<grpc::NewDecksRequest> for NewDecksRequest {
     type Error = NewDecksRequestValidationError;
 
     fn try_from(value: grpc::NewDecksRequest) -> Result<Self, Self::Error> {
-        let grpc::NewDecksRequest { decks, ctx } = value;
-
-        info!("received context string: {ctx}");
-
-        let ext: MyContextExtractor = serde_json::from_str(&ctx)?;
-        info!("extracted to: {ext:?}");
-        let ctx = ext.extract();
+        let grpc::NewDecksRequest { decks } = value;
 
         let Ok(decks) = usize::try_from(decks) else {
             return Err(NewDecksRequestValidationError::InvalidDeckCount);
@@ -251,29 +267,7 @@ impl TryFrom<grpc::NewDecksRequest> for WithContext<NewDecksRequest> {
             return Err(NewDecksRequestValidationError::InvalidDeckCount);
         }
 
-        Ok(WithContext {
-            thing: NewDecksRequest { decks },
-            ctx,
-        })
-    }
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct MyContextExtractor(HashMap<String, String>);
-
-impl MyContextExtractor {
-    fn extract(&self) -> opentelemetry::Context {
-        opentelemetry::global::get_text_map_propagator(|propagator| propagator.extract(self))
-    }
-}
-
-impl Extractor for MyContextExtractor {
-    fn get(&self, key: &str) -> Option<&str> {
-        self.0.get(key).map(|v| v.as_str())
-    }
-
-    fn keys(&self) -> Vec<&str> {
-        self.0.keys().map(|k| k.as_ref()).collect()
+        Ok(NewDecksRequest { decks })
     }
 }
 
@@ -296,7 +290,7 @@ enum DrawCardsRequestValidationError {
     TraceContextParse(#[from] serde_json::Error),
 }
 
-impl TryFrom<grpc::DrawCardsRequest> for WithContext<DrawCardsRequest> {
+impl TryFrom<grpc::DrawCardsRequest> for DrawCardsRequest {
     type Error = DrawCardsRequestValidationError;
 
     fn try_from(value: grpc::DrawCardsRequest) -> Result<Self, Self::Error> {
@@ -304,13 +298,7 @@ impl TryFrom<grpc::DrawCardsRequest> for WithContext<DrawCardsRequest> {
             deck_id,
             hands,
             count,
-            ctx,
         } = value;
-
-        info!("received context string: {ctx}");
-
-        let ext: MyContextExtractor = serde_json::from_str(&ctx)?;
-        let ctx = ext.extract();
 
         let Ok(deck_id) = DeckID::try_from(deck_id.as_str()) else {
             return Err(DrawCardsRequestValidationError::DeckID);
@@ -324,13 +312,10 @@ impl TryFrom<grpc::DrawCardsRequest> for WithContext<DrawCardsRequest> {
             return Err(DrawCardsRequestValidationError::Hands);
         };
 
-        Ok(WithContext {
-            thing: DrawCardsRequest {
-                deck_id,
-                hands,
-                count,
-            },
-            ctx,
+        Ok(DrawCardsRequest {
+            deck_id,
+            hands,
+            count,
         })
     }
 }
