@@ -30,7 +30,7 @@ use tracing_showcase::deck_of_cards::{DeckOfCardsClient, DrawnCardsInfo};
 use tracing_showcase::{grpc, init_tracing};
 use url::Url;
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing("grpc server")?;
 
@@ -153,9 +153,6 @@ where
         let resp = this.fut.poll(cx);
         if let Poll::Ready(rdy) = &resp {
             if let Ok(resp) = rdy {
-                info!("status = {}", resp.status());
-                info!("headers = {:?}", resp.headers());
-
                 if let Some(content_type) = resp.headers().get("content-type") {
                     if content_type == "application/grpc" {
                         if let Some(grpc_status) = resp.headers().get("grpc-status") {
@@ -254,11 +251,11 @@ where
     }
 }
 
+#[pin_project(project = InterceptorFutProj)]
 enum InterceptorFut<F> {
     Status(tonic::Status),
-    FutInstrumented(Instrumented<F>),
-    Fut(F),
-    Consumed,
+    FutInstrumented(#[pin] Instrumented<F>),
+    Fut(#[pin] F),
 }
 
 impl<F, ResBody, E> Future for InterceptorFut<F>
@@ -269,30 +266,17 @@ where
     type Output = F::Output;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = unsafe { self.get_unchecked_mut() };
+        let this = self.project();
 
         match this {
-            InterceptorFut::Status(s) => {
+            InterceptorFutProj::Status(s) => {
+                // replace status with cheap to make dummy value
                 let s = std::mem::replace(s, tonic::Status::internal(""));
-                drop(std::mem::replace(this, InterceptorFut::Consumed));
                 let (p, _) = s.to_http().into_parts();
                 Poll::Ready(Ok(http::Response::from_parts(p, ResBody::default())))
             }
-            InterceptorFut::FutInstrumented(f) => {
-                let r = unsafe { Pin::new_unchecked(f) }.poll(cx);
-                if r.is_ready() {
-                    drop(std::mem::replace(this, InterceptorFut::Consumed));
-                }
-                r
-            }
-            InterceptorFut::Fut(f) => {
-                let r = unsafe { Pin::new_unchecked(f) }.poll(cx);
-                if r.is_ready() {
-                    drop(std::mem::replace(this, InterceptorFut::Consumed));
-                }
-                r
-            }
-            InterceptorFut::Consumed => panic!("polled InterceptorFut when already consumed"),
+            InterceptorFutProj::FutInstrumented(f) => f.poll(cx),
+            InterceptorFutProj::Fut(f) => f.poll(cx),
         }
     }
 }
