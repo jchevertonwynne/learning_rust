@@ -1,9 +1,6 @@
 use grpc::cards_service_client::CardsServiceClient;
 use std::collections::HashMap;
 
-
-
-
 use tonic::metadata::{Ascii, MetadataValue};
 
 use tracing::{info, info_span, Instrument};

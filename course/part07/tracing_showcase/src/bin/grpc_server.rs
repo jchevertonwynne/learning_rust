@@ -14,6 +14,7 @@ use std::task::{Context, Poll};
 use async_trait::async_trait;
 use futures::{FutureExt, StreamExt, TryStreamExt};
 use grpc::cards_service_server::CardsServiceServer;
+use http::HeaderMap;
 use mongodb::bson::doc;
 use mongodb::options::UpdateModifications;
 
@@ -150,8 +151,9 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: http::Request<ReqBody>) -> Self::Future {
-        let metadata = MetadataMap::from_headers(req.headers().clone());
+    fn call(&mut self, mut req: http::Request<ReqBody>) -> Self::Future {
+        // retrieve headers & place empty headers as placeholder
+        let metadata = MetadataMap::from_headers(std::mem::take(req.headers_mut()));
 
         let Some(parent_ctx) = metadata.get("tracing-parent-context") else {
             return InterceptorFut::Fut(self.inner.call(req));
@@ -166,6 +168,9 @@ where
             Ok(parent_ctx) => parent_ctx,
             Err(err) => return InterceptorFut::Status(tonic::Status::internal(err.to_string())),
         };
+
+        // put headers back now that we're done with them
+        let _ = std::mem::replace(req.headers_mut(), metadata.into_headers());
 
         let parent_ctx = opentelemetry::global::get_text_map_propagator(|propagator| {
             propagator.extract(&parent_ctx_map)
