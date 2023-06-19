@@ -1,7 +1,12 @@
 use futures::{StreamExt, TryStreamExt};
 use tracing::info;
 
-use crate::{deck_of_cards::DeckOfCardsClient, mongo::MongoRecordController, model::{DeckID, DeckInfo, DrawnCardsInfo}, grpc::proto};
+use crate::{
+    deck_of_cards::DeckOfCardsClient,
+    grpc::proto,
+    model::{DeckID, DeckInfo, DrawnCardsInfo},
+    mongo::MongoRecordController,
+};
 
 pub struct CardsServiceInternal {
     cards_client: DeckOfCardsClient,
@@ -20,7 +25,7 @@ impl CardsServiceInternal {
     pub async fn new_deck(
         &self,
         new_decks_request: NewDecksRequest,
-    ) -> Result<DeckID, NewDeckError> {
+    ) -> Result<NewDecksResponse, NewDeckError> {
         let NewDecksRequest { decks } = new_decks_request;
 
         let DeckInfo { deck_id, .. } = self.cards_client.new_deck(decks).await?;
@@ -31,14 +36,14 @@ impl CardsServiceInternal {
 
         info!("stored deck in mongo");
 
-        Ok(deck_id)
+        Ok(NewDecksResponse { deck_id })
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn draw_cards(
         &self,
         draw_cards_request: DrawCardsRequest,
-    ) -> Result<Vec<DrawnCardsInfo>, DrawCardsError> {
+    ) -> Result<DrawCardsResponse, DrawCardsError> {
         let DrawCardsRequest {
             deck_id,
             hands,
@@ -53,7 +58,7 @@ impl CardsServiceInternal {
 
         info!("incremented count in mongo");
 
-        Ok(hands)
+        Ok(DrawCardsResponse { hands })
     }
 
     #[tracing::instrument(skip(self))]
@@ -94,6 +99,20 @@ pub struct NewDecksRequest {
     decks: usize,
 }
 
+#[derive(Debug)]
+pub struct NewDecksResponse {
+    deck_id: DeckID,
+}
+
+impl From<NewDecksResponse> for proto::NewDecksResponse {
+    fn from(value: NewDecksResponse) -> Self {
+        let NewDecksResponse { deck_id } = value;
+        Self {
+            deck_id: deck_id.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum NewDecksRequestValidationError {
     #[error("count must be a positive integer")]
@@ -108,13 +127,13 @@ impl TryFrom<proto::NewDecksRequest> for NewDecksRequest {
     fn try_from(value: proto::NewDecksRequest) -> Result<Self, Self::Error> {
         let proto::NewDecksRequest { decks } = value;
 
-        let Ok(decks) = usize::try_from(decks) else {
-            return Err(NewDecksRequestValidationError::InvalidDeckCount);
-        };
+        let decks =
+            usize::try_from(decks).map_err(|_| NewDecksRequestValidationError::InvalidDeckCount)?;
 
-        if decks == 0 {
-            return Err(NewDecksRequestValidationError::InvalidDeckCount);
-        }
+        // a regular if is probably better here, but this code isn't peer reviewed so i can do what i want
+        (decks != 0)
+            .then_some(())
+            .ok_or(NewDecksRequestValidationError::InvalidDeckCount)?;
 
         Ok(NewDecksRequest { decks })
     }
@@ -125,6 +144,25 @@ pub struct DrawCardsRequest {
     deck_id: DeckID,
     hands: usize,
     count: u8,
+}
+
+#[derive(Debug)]
+pub struct DrawCardsResponse {
+    hands: Vec<DrawnCardsInfo>,
+}
+
+impl From<DrawCardsResponse> for proto::DrawCardsResponse {
+    fn from(value: DrawCardsResponse) -> Self {
+        let DrawCardsResponse { hands } = value;
+        proto::DrawCardsResponse {
+            hands: hands
+                .into_iter()
+                .map(|hand| proto::Hand {
+                    cards: hand.cards.iter().map(Into::into).collect(),
+                })
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -149,17 +187,12 @@ impl TryFrom<proto::DrawCardsRequest> for DrawCardsRequest {
             count,
         } = value;
 
-        let Ok(deck_id) = DeckID::try_from(deck_id.as_str()) else {
-            return Err(DrawCardsRequestValidationError::DeckID);
-        };
+        let deck_id = DeckID::try_from(deck_id.as_str())
+            .map_err(|_| DrawCardsRequestValidationError::DeckID)?;
 
-        let Ok(count) =  u8::try_from(count) else {
-            return Err(DrawCardsRequestValidationError::Count);
-        };
+        let count = u8::try_from(count).map_err(|_| DrawCardsRequestValidationError::Count)?;
 
-        let Ok(hands) = usize::try_from(hands) else {
-            return Err(DrawCardsRequestValidationError::Hands);
-        };
+        let hands = usize::try_from(hands).map_err(|_| DrawCardsRequestValidationError::Hands)?;
 
         Ok(DrawCardsRequest {
             deck_id,

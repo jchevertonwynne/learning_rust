@@ -6,7 +6,7 @@ use crate::model::DeckID;
 
 #[derive(Serialize, Deserialize)]
 pub struct InteractionRecord {
-    deck_id: String,
+    deck_id: DeckID,
     count: usize,
 }
 
@@ -16,35 +16,27 @@ pub struct MongoRecordController {
 
 impl MongoRecordController {
     pub fn new(client: &mongodb::Client) -> Self {
-        let collection = client
+        let interactions = client
             .database("tracing_showcase")
             .collection("interactions");
-        Self {
-            interactions: collection,
-        }
+        Self { interactions }
     }
 
     #[instrument(skip(self))]
-    pub async fn create(&self, deck_id: DeckID) -> mongodb::error::Result<()> {
+    pub async fn create(&self, deck_id: DeckID) -> Result<(), mongodb::error::Error> {
         info!("creating a new record");
         self.interactions
-            .insert_one(
-                InteractionRecord {
-                    deck_id: deck_id.to_string(),
-                    count: 0,
-                },
-                None,
-            )
+            .insert_one(InteractionRecord { deck_id, count: 0 }, None)
             .await?;
         Ok(())
     }
 
     #[instrument(skip(self))]
-    pub async fn increment_count(&self, deck_id: DeckID) -> mongodb::error::Result<()> {
+    pub async fn increment_count(&self, deck_id: DeckID) -> Result<(), mongodb::error::Error> {
         info!("incrementing count");
         self.interactions
             .update_one(
-                doc! { "deck_id": deck_id.to_string() },
+                doc! { "deck_id": deck_id },
                 doc! { "$inc": { "count": 1 } },
                 None,
             )

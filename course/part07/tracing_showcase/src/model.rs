@@ -1,10 +1,10 @@
-use std::fmt::{Debug, Formatter, Display};
+use std::fmt::{Debug, Display, Formatter};
 
+use mongodb::bson::doc;
 use rand::seq::SliceRandom;
 use url::Url;
 
 use crate::grpc::proto;
-
 
 #[derive(Copy, Clone)]
 pub struct DeckID([u8; 12]);
@@ -17,6 +17,12 @@ impl DeckID {
                 .choose(&mut rand::thread_rng())
                 .expect("slice is non empty")
         }))
+    }
+}
+
+impl From<DeckID> for mongodb::bson::Bson {
+    fn from(value: DeckID) -> Self {
+        mongodb::bson::Bson::String(value.to_string())
     }
 }
 
@@ -124,6 +130,25 @@ pub struct Card {
     pub suit: Suit,
 }
 
+impl From<Card> for mongodb::bson::Bson {
+    fn from(value: Card) -> Self {
+        let Card {
+            code,
+            image,
+            images,
+            value,
+            suit,
+        } = value;
+        mongodb::bson::Bson::Document(doc! {
+            "code": code,
+            "image": image.to_string(),
+            "images": images,
+            "value": value,
+            "suit": suit
+        })
+    }
+}
+
 impl<'a> From<&'a Card> for proto::Card {
     fn from(card: &'a Card) -> Self {
         let value: proto::Value = (&card.value).into();
@@ -139,6 +164,12 @@ impl<'a> From<&'a Card> for proto::Card {
 pub struct Code {
     pub value: Value,
     pub suit: Suit,
+}
+
+impl From<Code> for mongodb::bson::Bson {
+    fn from(value: Code) -> Self {
+        mongodb::bson::Bson::String(serde_json::to_string(&value).unwrap())
+    }
 }
 
 // a manual implementation of Serialize that serializes to a 2 char string
@@ -195,9 +226,9 @@ impl<'de> serde::Deserialize<'de> for Code {
             {
                 let mut chars = v.chars();
 
-                let Some(value) = chars.next() else {
-                    return Err(serde::de::Error::invalid_length(0, &self));
-                };
+                let value = chars
+                    .next()
+                    .ok_or(serde::de::Error::invalid_length(0, &self))?;
                 let value = match value {
                     'A' => Value::Ace,
                     '2' => Value::Value2,
@@ -220,9 +251,9 @@ impl<'de> serde::Deserialize<'de> for Code {
                     }
                 };
 
-                let Some(suit) = chars.next() else {
-                    return Err(serde::de::Error::invalid_length(1, &self));
-                };
+                let suit = chars
+                    .next()
+                    .ok_or(serde::de::Error::invalid_length(1, &self))?;
                 let suit = match suit {
                     'C' => Suit::Clubs,
                     'D' => Suit::Diamonds,
@@ -252,6 +283,15 @@ impl<'de> serde::Deserialize<'de> for Code {
 pub struct Images {
     pub svg: Url,
     pub png: Url,
+}
+
+impl From<Images> for mongodb::bson::Bson {
+    fn from(value: Images) -> Self {
+        mongodb::bson::Bson::Document(doc! {
+            "svg": value.svg.to_string(),
+            "png": value.png.to_string()
+        })
+    }
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize, Clone, Copy, strum_macros::EnumIter)]
@@ -293,6 +333,12 @@ pub enum Value {
     King,
 }
 
+impl From<Value> for mongodb::bson::Bson {
+    fn from(value: Value) -> Self {
+        mongodb::bson::Bson::String(serde_json::to_string(&value).unwrap())
+    }
+}
+
 impl<'a> From<&'a Value> for proto::Value {
     fn from(value: &'a Value) -> Self {
         match value {
@@ -323,6 +369,12 @@ pub enum Suit {
     Spades,
 
     Hearts,
+}
+
+impl From<Suit> for mongodb::bson::Bson {
+    fn from(value: Suit) -> Self {
+        mongodb::bson::Bson::String(serde_json::to_string(&value).unwrap())
+    }
 }
 
 impl<'a> From<&'a Suit> for proto::Suit {

@@ -1,8 +1,7 @@
-
 use reqwest::Client;
 use url::Url;
 
-use crate::model::{DeckInfo, DeckID, DrawnCardsInfo};
+use crate::model::{DeckID, DeckInfo, DrawnCardsInfo};
 
 pub struct DeckOfCardsClient {
     base_url: Url,

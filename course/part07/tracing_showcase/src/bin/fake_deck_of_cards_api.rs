@@ -17,8 +17,8 @@ use strum::IntoEnumIterator;
 use tracing::{info, info_span, instrument};
 use url::Url;
 
+use tracing_showcase::model::{Card, Code, DeckID, DeckInfo, DrawnCardsInfo, Images, Suit, Value};
 use tracing_showcase::tracing_setup::init_tracing;
-use tracing_showcase::model::{DeckID, Card, DeckInfo, DrawnCardsInfo, Suit, Value, Code, Images};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -105,7 +105,7 @@ impl AppState {
         deck_id: DeckID,
         cards: Vec<Card>,
     ) -> Result<(), mongodb::error::Error> {
-        let card_count = mongodb::bson::to_bson(&cards.len())?;
+        let card_count = cards.len() as i64;
         let cards = mongodb::bson::to_bson(&cards)?;
         self.decks_collection
             .update_one(
@@ -123,21 +123,19 @@ impl AppState {
         deck_id: DeckID,
         n_cards: usize,
     ) -> Result<Vec<Card>, RemoveCardsError> {
-        let n_cards_bson = mongodb::bson::to_bson(&n_cards)?;
-
+        let n_cards_i64 = n_cards as i64;
         let DeckEntry { mut cards, .. } = self
             .decks_collection
             .find_one_and_update(
                 doc! {
                     "deck_id": deck_id.to_string(),
-                    "card_count": { "$gte": n_cards_bson.clone()
-                    }
+                    "card_count": { "$gte": n_cards_i64 }
                 },
                 vec![doc! {
                     "$set": {
-                        "card_count": { "$subtract": [ "$card_count", n_cards_bson.clone() ] },
+                        "card_count": { "$subtract": [ "$card_count", n_cards_i64 ] },
                         "cards": {
-                            "$slice": ["$cards", 0, { "$subtract": [ "$card_count", n_cards_bson.clone() ] } ]
+                            "$slice": ["$cards", 0, { "$subtract": [ "$card_count", n_cards_i64 ] } ]
                         },
                     }
                 }],

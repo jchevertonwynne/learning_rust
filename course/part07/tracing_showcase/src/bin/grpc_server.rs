@@ -10,9 +10,9 @@ use tracing_showcase::service::CardsServiceInternal;
 use url::Url;
 
 use tracing_showcase::deck_of_cards::DeckOfCardsClient;
-use tracing_showcase::layers::TracingContextPropagatorLayer;
+use tracing_showcase::layers::{GrpcCheckSuccess, JaegerTracingContextPropagatorLayer};
 use tracing_showcase::mongo::MongoRecordController;
-use tracing_showcase::{tracing_setup::init_tracing, layers::GrpcRequestCounterLayer};
+use tracing_showcase::{layers::RequestCounterLayer, tracing_setup::init_tracing};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -42,8 +42,8 @@ async fn main() -> anyhow::Result<()> {
 
     let shutdown = tokio::signal::ctrl_c().map(|_| ());
     tonic::transport::Server::builder()
-        .layer(GrpcRequestCounterLayer::new())
-        .layer(TracingContextPropagatorLayer::new())
+        .layer(RequestCounterLayer::new(GrpcCheckSuccess::new()))
+        .layer(JaegerTracingContextPropagatorLayer::new())
         .add_service(CardsServiceServer::new(service))
         .serve_with_shutdown(addr, shutdown)
         .await?;

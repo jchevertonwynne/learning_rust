@@ -1,9 +1,9 @@
-use tracing::{info, info_span, Instrument};
+use tracing::{info, info_span, instrument, Instrument};
 
 use tracing_showcase::grpc::proto::cards_service_client::CardsServiceClient;
 use tracing_showcase::grpc::proto::{DrawCardsRequest, NewDecksRequest};
-use tracing_showcase::layers::intercept_outbound;
-use tracing_showcase::{tracing_setup::init_tracing, layers::GrpcRequestCounterLayer};
+use tracing_showcase::layers::{intercept_outbound, GrpcCheckSuccess};
+use tracing_showcase::{layers::RequestCounterLayer, tracing_setup::init_tracing};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -11,16 +11,25 @@ async fn main() -> anyhow::Result<()> {
 
     info!("hello from the client!");
 
-    let span = info_span!("being a client");
-    let entered = span.entered();
+    let res = run_client().await;
 
+    info!("goodbye from the client!");
+
+    opentelemetry::global::shutdown_tracer_provider();
+
+    res
+}
+
+#[instrument]
+async fn run_client() -> anyhow::Result<()> {
     let channel = tonic::transport::Endpoint::new("http://127.0.0.1:25565")?
         .connect()
         .instrument(info_span!("connecting to server"))
         .await?;
+
     let client = tower::ServiceBuilder::new()
-        .layer(GrpcRequestCounterLayer::new())
         .layer(tonic::service::interceptor(intercept_outbound))
+        .layer(RequestCounterLayer::new(GrpcCheckSuccess::new()))
         .service(channel);
     let mut client = CardsServiceClient::new(client);
 
@@ -47,12 +56,6 @@ async fn main() -> anyhow::Result<()> {
         .count();
 
     info!("retrieved {cards} cards");
-
-    entered.exit();
-
-    info!("goodbye from the client!");
-
-    opentelemetry::global::shutdown_tracer_provider();
 
     Ok(())
 }
