@@ -59,6 +59,25 @@ impl SuccessChecker for GrpcCheckSuccess {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct HttpCheckSuccess {}
+
+impl HttpCheckSuccess {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl SuccessChecker for HttpCheckSuccess {
+    fn is_right_request_type<R>(&self, _req: &http::Request<R>) -> bool {
+        true
+    }
+
+    fn is_successful_response<R>(&self, res: &http::Response<R>) -> bool {
+        res.status().is_success()
+    }
+}
+
 impl<C> RequestCounterLayer<C> {
     pub fn new(success_checker: C) -> Self {
         Self {

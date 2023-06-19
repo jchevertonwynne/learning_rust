@@ -3,11 +3,11 @@ use crate::mongo::{MongoRecordController, RemoveCardsError};
 use tracing::instrument;
 
 #[derive(Clone)]
-pub struct DeckOfCardsAPIState {
+pub struct FakeDeckOfCardsAPIState {
     controller: MongoRecordController,
 }
 
-impl DeckOfCardsAPIState {
+impl FakeDeckOfCardsAPIState {
     pub fn new(client: &mongodb::Client) -> Self {
         Self {
             controller: MongoRecordController::new(client),

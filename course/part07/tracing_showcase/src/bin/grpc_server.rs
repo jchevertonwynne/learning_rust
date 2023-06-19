@@ -3,14 +3,15 @@
 // DECK_OF_CARDS_URL=http://localhost:25566 to use fake deck of cards api
 
 use futures::FutureExt;
+use tower::ServiceBuilder;
 use tracing::info;
 use tracing_showcase::grpc::proto::cards_service_server::CardsServiceServer;
 use tracing_showcase::grpc::CardsServiceState;
-use tracing_showcase::service::CardsServiceInternal;
 use url::Url;
 
 use tracing_showcase::deck_of_cards::DeckOfCardsClient;
 use tracing_showcase::layers::{GrpcCheckSuccess, JaegerTracingContextPropagatorLayer};
+use tracing_showcase::middleware::JaegerContextPropagatorMiddleware;
 use tracing_showcase::mongo::MongoRecordController;
 use tracing_showcase::{layers::RequestCounterLayer, tracing_setup::init_tracing};
 
@@ -25,7 +26,9 @@ async fn main() -> anyhow::Result<()> {
 
     info!("connected to mongo...");
 
-    let client = reqwest::ClientBuilder::default().build()?;
+    let client = reqwest_middleware::ClientBuilder::new(reqwest::ClientBuilder::default().build()?)
+        .with(JaegerContextPropagatorMiddleware::new())
+        .build();
     let url = Url::try_from(
         std::env::var("DECK_OF_CARDS_URL")
             .unwrap_or("https://deckofcardsapi.com".to_string())
@@ -33,8 +36,7 @@ async fn main() -> anyhow::Result<()> {
     )?;
     let cards_client = DeckOfCardsClient::new(url, client);
 
-    let service =
-        CardsServiceState::new(CardsServiceInternal::new(cards_client, record_controller));
+    let service = CardsServiceState::new(cards_client, record_controller);
 
     let addr = ([127, 0, 0, 1], 25565).into();
 
@@ -42,8 +44,11 @@ async fn main() -> anyhow::Result<()> {
 
     let shutdown = tokio::signal::ctrl_c().map(|_| ());
     tonic::transport::Server::builder()
-        .layer(RequestCounterLayer::new(GrpcCheckSuccess::new()))
-        .layer(JaegerTracingContextPropagatorLayer::new())
+        .layer(
+            ServiceBuilder::new()
+                .layer(JaegerTracingContextPropagatorLayer::new())
+                .layer(RequestCounterLayer::new(GrpcCheckSuccess::new())),
+        )
         .add_service(CardsServiceServer::new(service))
         .serve_with_shutdown(addr, shutdown)
         .await?;

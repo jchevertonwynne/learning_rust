@@ -1,9 +1,10 @@
 pub mod deck_of_cards;
-pub mod deck_of_cards_api_state;
 pub mod endpoints;
+pub mod fake_deck_of_cards_api_state;
 pub mod grpc;
+pub mod grpc_server_state;
 pub mod layers;
+pub mod middleware;
 pub mod model;
 pub mod mongo;
-pub mod service;
 pub mod tracing_setup;

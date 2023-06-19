@@ -1,4 +1,4 @@
-use crate::deck_of_cards_api_state::DeckOfCardsAPIState;
+use crate::fake_deck_of_cards_api_state::FakeDeckOfCardsAPIState;
 use crate::model::{Card, Code, DeckID, DeckInfo, DrawnCardsInfo, Images, Suit, Value};
 use crate::mongo::RemoveCardsError;
 use axum::extract::{Path, Query, State};
@@ -8,6 +8,7 @@ use http::StatusCode;
 use rand::prelude::SliceRandom;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
+use std::time::Duration;
 use strum::IntoEnumIterator;
 use tracing::{info, instrument};
 use url::Url;
@@ -15,7 +16,7 @@ use url::Url;
 #[instrument(skip(app_state))]
 pub async fn new_decks(
     Query(query): Query<NewDecksQuery>,
-    app_state: State<DeckOfCardsAPIState>,
+    app_state: State<FakeDeckOfCardsAPIState>,
 ) -> Result<Json<DeckInfo>, NewDecksError> {
     let deck_id = DeckID::random();
 
@@ -70,8 +71,10 @@ impl axum::response::IntoResponse for NewDecksError {
 pub async fn draw_cards(
     Path(deck_id): Path<DeckID>,
     Query(query): Query<DrawCardsQuery>,
-    app_state: State<DeckOfCardsAPIState>,
+    app_state: State<FakeDeckOfCardsAPIState>,
 ) -> Result<Json<DrawnCardsInfo>, DrawCardsError> {
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
     let cards = app_state.remove_n_cards(deck_id, query.count).await?;
 
     Ok(Json(DrawnCardsInfo {

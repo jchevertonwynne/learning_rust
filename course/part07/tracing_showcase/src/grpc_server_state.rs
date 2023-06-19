@@ -8,13 +8,16 @@ use crate::{
     mongo::MongoRecordController,
 };
 
-pub struct CardsServiceInternal {
+pub struct CardsServiceStateInternal {
     cards_client: DeckOfCardsClient,
     record_controller: MongoRecordController,
 }
 
-impl CardsServiceInternal {
-    pub fn new(cards_client: DeckOfCardsClient, record_controller: MongoRecordController) -> Self {
+impl CardsServiceStateInternal {
+    pub(crate) fn new(
+        cards_client: DeckOfCardsClient,
+        record_controller: MongoRecordController,
+    ) -> Self {
         Self {
             cards_client,
             record_controller,
@@ -67,7 +70,7 @@ impl CardsServiceInternal {
         deck_id: DeckID,
         hands: usize,
         count: u8,
-    ) -> Result<Vec<DrawnCardsInfo>, reqwest::Error> {
+    ) -> Result<Vec<DrawnCardsInfo>, reqwest_middleware::Error> {
         // (0..hands)
         //     .map(|_| self.cards_client.draw_cards(deck_id, count))
         //     .collect::<FuturesUnordered<_>>()
@@ -81,7 +84,7 @@ impl CardsServiceInternal {
 #[derive(Debug, thiserror::Error)]
 pub enum NewDeckError {
     #[error("failed to draw deck: {0}")]
-    ReqwestError(#[from] reqwest::Error),
+    ReqwestError(#[from] reqwest_middleware::Error),
     #[error("failed to update mongo: {0}")]
     MongoError(#[from] mongodb::error::Error),
 }
@@ -89,7 +92,7 @@ pub enum NewDeckError {
 #[derive(Debug, thiserror::Error)]
 pub enum DrawCardsError {
     #[error("failed to draw cards: {0}")]
-    ReqwestError(#[from] reqwest::Error),
+    ReqwestError(#[from] reqwest_middleware::Error),
     #[error("failed to update mongo: {0}")]
     MongoError(#[from] mongodb::error::Error),
 }

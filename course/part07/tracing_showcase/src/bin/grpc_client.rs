@@ -1,3 +1,4 @@
+use tower::ServiceBuilder;
 use tracing::{info, info_span, instrument, Instrument};
 
 use tracing_showcase::grpc::proto::cards_service_client::CardsServiceClient;
@@ -28,8 +29,11 @@ async fn run_client() -> anyhow::Result<()> {
         .await?;
 
     let client = tower::ServiceBuilder::new()
-        .layer(tonic::service::interceptor(inject_jaeger_context))
-        .layer(RequestCounterLayer::new(GrpcCheckSuccess::new()))
+        .layer(
+            ServiceBuilder::new()
+                .layer(tonic::service::interceptor(inject_jaeger_context))
+                .layer(RequestCounterLayer::new(GrpcCheckSuccess::new())),
+        )
         .service(channel);
     let mut client = CardsServiceClient::new(client);
 
