@@ -1,5 +1,5 @@
 use futures::{StreamExt, TryStreamExt};
-use tracing::info;
+use tracing::{info, instrument};
 
 use crate::{
     deck_of_cards::DeckOfCardsClient,
@@ -21,7 +21,7 @@ impl CardsServiceInternal {
         }
     }
 
-    #[tracing::instrument(skip(self))]
+    #[instrument(skip(self))]
     pub async fn new_deck(
         &self,
         new_decks_request: NewDecksRequest,
@@ -39,7 +39,7 @@ impl CardsServiceInternal {
         Ok(NewDecksResponse { deck_id })
     }
 
-    #[tracing::instrument(skip(self))]
+    #[instrument(skip(self))]
     pub async fn draw_cards(
         &self,
         draw_cards_request: DrawCardsRequest,
@@ -61,7 +61,7 @@ impl CardsServiceInternal {
         Ok(DrawCardsResponse { hands })
     }
 
-    #[tracing::instrument(skip(self))]
+    #[instrument(skip(self))]
     pub async fn draw_all_cards(
         &self,
         deck_id: DeckID,

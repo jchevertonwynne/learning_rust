@@ -1,4 +1,6 @@
 pub mod deck_of_cards;
+pub mod deck_of_cards_api_state;
+pub mod endpoints;
 pub mod grpc;
 pub mod layers;
 pub mod model;

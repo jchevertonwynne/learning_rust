@@ -166,19 +166,9 @@ pub struct Code {
     pub suit: Suit,
 }
 
-impl From<Code> for mongodb::bson::Bson {
-    fn from(value: Code) -> Self {
-        mongodb::bson::Bson::String(serde_json::to_string(&value).unwrap())
-    }
-}
-
-// a manual implementation of Serialize that serializes to a 2 char string
-impl serde::ser::Serialize for Code {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let value = match self.value {
+impl From<&'_ Code> for [u8; 2] {
+    fn from(code: &'_ Code) -> Self {
+        let value = match code.value {
             Value::Ace => b'A',
             Value::Value2 => b'2',
             Value::Value3 => b'3',
@@ -193,13 +183,31 @@ impl serde::ser::Serialize for Code {
             Value::Queen => b'Q',
             Value::King => b'K',
         };
-        let suit = match self.suit {
+        let suit = match code.suit {
             Suit::Clubs => b'C',
             Suit::Diamonds => b'D',
             Suit::Spades => b'S',
             Suit::Hearts => b'H',
         };
-        let s = [value, suit];
+        [value, suit]
+    }
+}
+
+impl From<Code> for mongodb::bson::Bson {
+    fn from(value: Code) -> Self {
+        let s: [u8; 2] = (&value).into();
+        let s = std::str::from_utf8(&s).expect("manually built string should be valid utf-8");
+        mongodb::bson::Bson::String(s.to_string())
+    }
+}
+
+// a manual implementation of Serialize that serializes to a 2 char string
+impl serde::ser::Serialize for Code {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let s: [u8; 2] = self.into();
         let s = std::str::from_utf8(&s).expect("manually built string should be valid utf-8");
         serializer.serialize_str(s)
     }
@@ -335,7 +343,24 @@ pub enum Value {
 
 impl From<Value> for mongodb::bson::Bson {
     fn from(value: Value) -> Self {
-        mongodb::bson::Bson::String(serde_json::to_string(&value).unwrap())
+        mongodb::bson::Bson::String(
+            match value {
+                Value::Ace => "ACE",
+                Value::Value2 => "2",
+                Value::Value3 => "3",
+                Value::Value4 => "4",
+                Value::Value5 => "5",
+                Value::Value6 => "6",
+                Value::Value7 => "7",
+                Value::Value8 => "8",
+                Value::Value9 => "9",
+                Value::Value10 => "10",
+                Value::Jack => "JACK",
+                Value::Queen => "QUEEN",
+                Value::King => "KING",
+            }
+            .to_string(),
+        )
     }
 }
 
@@ -373,7 +398,15 @@ pub enum Suit {
 
 impl From<Suit> for mongodb::bson::Bson {
     fn from(value: Suit) -> Self {
-        mongodb::bson::Bson::String(serde_json::to_string(&value).unwrap())
+        mongodb::bson::Bson::String(
+            match value {
+                Suit::Clubs => "CLUBS",
+                Suit::Diamonds => "DIAMONDS",
+                Suit::Spades => "SPADES",
+                Suit::Hearts => "HEARTS",
+            }
+            .to_string(),
+        )
     }
 }
 

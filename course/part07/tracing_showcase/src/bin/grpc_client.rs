@@ -2,7 +2,7 @@ use tracing::{info, info_span, instrument, Instrument};
 
 use tracing_showcase::grpc::proto::cards_service_client::CardsServiceClient;
 use tracing_showcase::grpc::proto::{DrawCardsRequest, NewDecksRequest};
-use tracing_showcase::layers::{intercept_outbound, GrpcCheckSuccess};
+use tracing_showcase::layers::{inject_jaeger_context, GrpcCheckSuccess};
 use tracing_showcase::{layers::RequestCounterLayer, tracing_setup::init_tracing};
 
 #[tokio::main]
@@ -28,7 +28,7 @@ async fn run_client() -> anyhow::Result<()> {
         .await?;
 
     let client = tower::ServiceBuilder::new()
-        .layer(tonic::service::interceptor(intercept_outbound))
+        .layer(tonic::service::interceptor(inject_jaeger_context))
         .layer(RequestCounterLayer::new(GrpcCheckSuccess::new()))
         .service(channel);
     let mut client = CardsServiceClient::new(client);

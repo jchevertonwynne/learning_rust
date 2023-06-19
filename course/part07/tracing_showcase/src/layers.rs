@@ -265,7 +265,7 @@ where
     }
 }
 
-pub fn intercept_outbound(
+pub fn inject_jaeger_context(
     mut req: tonic::Request<()>,
 ) -> Result<tonic::Request<()>, tonic::Status> {
     std::thread_local! {
