@@ -1,3 +1,7 @@
+use std::net::ToSocketAddrs;
+use std::str::FromStr;
+use std::time::Duration;
+
 use anyhow::Context;
 use axum::extract::{Path, Query, State};
 use axum::response::Response;
@@ -9,17 +13,12 @@ use mongodb::{Collection, IndexModel};
 use rand::seq::SliceRandom;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use std::net::ToSocketAddrs;
-use std::str::FromStr;
-use std::time::Duration;
-
 use strum::IntoEnumIterator;
 use tracing::{info, info_span, instrument};
-use tracing_showcase::deck_of_cards::{
-    Card, Code, DeckID, DeckInfo, DrawnCardsInfo, Images, Suit, Value,
-};
-use tracing_showcase::init_tracing;
 use url::Url;
+
+use tracing_showcase::tracing_setup::init_tracing;
+use tracing_showcase::model::{DeckID, Card, DeckInfo, DrawnCardsInfo, Suit, Value, Code, Images};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

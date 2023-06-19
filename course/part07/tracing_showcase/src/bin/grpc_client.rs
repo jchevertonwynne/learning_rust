@@ -1,12 +1,9 @@
-use grpc::cards_service_client::CardsServiceClient;
-use std::collections::HashMap;
-
-use tonic::metadata::{Ascii, MetadataValue};
-
 use tracing::{info, info_span, Instrument};
-use tracing_opentelemetry::OpenTelemetrySpanExt;
-use tracing_showcase::grpc::{DrawCardsRequest, NewDecksRequest};
-use tracing_showcase::{grpc, init_tracing};
+
+use tracing_showcase::grpc::proto::cards_service_client::CardsServiceClient;
+use tracing_showcase::grpc::proto::{DrawCardsRequest, NewDecksRequest};
+use tracing_showcase::layers::intercept_outbound;
+use tracing_showcase::{tracing_setup::init_tracing, layers::GrpcRequestCounterLayer};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -21,7 +18,11 @@ async fn main() -> anyhow::Result<()> {
         .connect()
         .instrument(info_span!("connecting to server"))
         .await?;
-    let mut client = CardsServiceClient::with_interceptor(channel, intercept);
+    let client = tower::ServiceBuilder::new()
+        .layer(GrpcRequestCounterLayer::new())
+        .layer(tonic::service::interceptor(intercept_outbound))
+        .service(channel);
+    let mut client = CardsServiceClient::new(client);
 
     let decks = client
         .new_decks(NewDecksRequest { decks: 5 })
@@ -54,28 +55,4 @@ async fn main() -> anyhow::Result<()> {
     opentelemetry::global::shutdown_tracer_provider();
 
     Ok(())
-}
-
-fn intercept(mut req: tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status> {
-    let ctx = tracing::Span::current().context();
-
-    let ctx_map = opentelemetry::global::get_text_map_propagator(|propagator| {
-        let mut propagation_ctx = HashMap::<String, String>::default();
-        propagator.inject_context(&ctx, &mut propagation_ctx);
-        propagation_ctx
-    });
-    
-    let ctx_str = match serde_json::to_string(&ctx_map) {
-        Ok(ctx_str) => ctx_str,
-        Err(err) => return Err(tonic::Status::internal(err.to_string())),
-    };
-    
-    let ctx_str: MetadataValue<Ascii> = match ctx_str.try_into() {
-        Ok(ctx_str) => ctx_str,
-        Err(err) => return Err(tonic::Status::internal(err.to_string())),
-    };
-    
-    req.metadata_mut().insert("tracing-parent-context", ctx_str);
-
-    Ok(req)
 }
