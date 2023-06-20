@@ -5,7 +5,7 @@ use std::{
     ops::{Deref, DerefMut},
     pin::Pin,
     sync::{Arc, Mutex},
-    task::{ready, Context, Poll},
+    task::{ready, Context, Poll}, marker::PhantomData, fmt::Debug,
 };
 
 use fxhash::FxBuildHasher;
@@ -19,33 +19,46 @@ use tracing::{info, info_span, instrument::Instrumented, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 pub trait CheckRequest: Clone {
-    type Request<Req>;
+    type Request;
     type ResponseChecker: CheckResponse;
 
-    fn is_right_request_type<Req>(&self, req: &Self::Request<Req>) -> bool;
+    fn is_right_request_type(&self, req: &Self::Request) -> bool;
     fn response_checker(&self) -> Self::ResponseChecker;
 }
 
 pub trait CheckResponse: Clone {
-    type Response<Res>;
+    type Response;
 
-    fn is_successful_response<Res>(&self, res: &Self::Response<Res>) -> bool;
+    fn is_successful_response(&self, res: &Self::Response) -> bool;
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct GrpcCheckRequest {}
+#[derive(Debug)]
+pub struct GrpcCheckRequest<I, O> (PhantomData<(I, O)>);
 
-impl GrpcCheckRequest {
+impl<I, O> Clone for GrpcCheckRequest<I, O> {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+} 
+
+impl<I, O> Default for GrpcCheckRequest<I, O> {
+    fn default() -> Self {
+        Self(PhantomData{})
+    }
+}
+
+impl<I, O> GrpcCheckRequest<I, O> {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl CheckRequest for GrpcCheckRequest {
-    type Request<Req> = http::Request<Req>;
-    type ResponseChecker = GrpcCheckResponse;
+impl<I, O> CheckRequest for GrpcCheckRequest<I, O> {
+    type Request = http::Request<I>;
+    type ResponseChecker = GrpcCheckResponse<O>;
 
-    fn is_right_request_type<Req>(&self, req: &http::Request<Req>) -> bool {
+    fn is_right_request_type(&self, req: &http::Request<I>) -> bool {
+        info!("headers = {:?}", req.headers());
         matches!(
             req.headers().get("Content-Type").map(|h| h.to_str()),
             Some(Ok("application/grpc"))
@@ -57,19 +70,32 @@ impl CheckRequest for GrpcCheckRequest {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct GrpcCheckResponse {}
+#[derive(Debug)]
+pub struct GrpcCheckResponse<O> (PhantomData<O>);
 
-impl GrpcCheckResponse {
+impl<O> Clone for GrpcCheckResponse<O> {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+} 
+
+impl<O> Default for GrpcCheckResponse<O> {
+    fn default() -> Self {
+        Self(PhantomData{})
+    }
+}
+
+impl<O> GrpcCheckResponse<O> {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl CheckResponse for GrpcCheckResponse {
-    type Response<Res> = http::Response<Res>;
+impl<O> CheckResponse for GrpcCheckResponse<O> {
+    type Response = http::Response<O>;
 
-    fn is_successful_response<Res>(&self, res: &http::Response<Res>) -> bool {
+    fn is_successful_response(&self, res: &http::Response<O>) -> bool {
+        info!("headers = {:?}", res.headers());
         res.status().is_success()
             && res
                 .headers()
@@ -79,20 +105,33 @@ impl CheckResponse for GrpcCheckResponse {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct HttpCheckRequest {}
+#[derive(Debug)]
+pub struct HttpCheckRequest<I, O> (PhantomData<(I, O)>);
 
-impl HttpCheckRequest {
+impl<I, O> Clone for HttpCheckRequest<I, O> {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+} 
+
+impl<I, O> Default for HttpCheckRequest<I, O> {
+    fn default() -> Self {
+        Self(PhantomData{})
+    }
+}
+
+impl<I, O> HttpCheckRequest<I, O> {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl CheckRequest for HttpCheckRequest {
-    type Request<Req> = http::Request<Req>;
-    type ResponseChecker = HttpCheckResponse;
+impl<I, O> CheckRequest for HttpCheckRequest<I, O> {
+    type Request = http::Request<I>;
+    type ResponseChecker = HttpCheckResponse<O>;
 
-    fn is_right_request_type<Req>(&self, _req: &http::Request<Req>) -> bool {
+    fn is_right_request_type(&self, req: &http::Request<I>) -> bool {
+        info!("headers = {:?}", req.headers());
         true
     }
 
@@ -101,19 +140,32 @@ impl CheckRequest for HttpCheckRequest {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct HttpCheckResponse {}
+#[derive(Debug)]
+pub struct HttpCheckResponse<O> (PhantomData<O>);
 
-impl HttpCheckResponse {
+impl<O> Clone for HttpCheckResponse<O> {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+} 
+
+impl<O> Default for HttpCheckResponse<O> {
+    fn default() -> Self {
+        Self(PhantomData{})
+    }
+}
+
+impl<O> HttpCheckResponse<O> {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl CheckResponse for HttpCheckResponse {
-    type Response<Res> = http::Response<Res>;
+impl<O> CheckResponse for HttpCheckResponse<O> {
+    type Response = http::Response<O>;
 
-    fn is_successful_response<Res>(&self, res: &http::Response<Res>) -> bool {
+    fn is_successful_response(&self, res: &http::Response<O>) -> bool {
+        info!("headers = {:?}", res.headers());
         res.status().is_success()
     }
 }
@@ -161,11 +213,11 @@ pub struct RequestCounterService<C, S> {
     inner: S,
 }
 
-impl<C, S, I, O> Service<http::Request<I>> for RequestCounterService<C, S>
+impl<C, S, I, O> Service<I> for RequestCounterService<C, S>
 where
-    C: CheckRequest<Request<I> = http::Request<I>>,
-    C::ResponseChecker: CheckResponse<Response<O> = http::Response<O>>,
-    S: Service<http::Request<I>, Response = http::Response<O>>,
+    C: CheckRequest<Request = I>,
+    C::ResponseChecker: CheckResponse<Response = O>,
+    S: Service<I, Response = O>,
 {
     type Response = S::Response;
     type Error = S::Error;
@@ -175,9 +227,8 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: http::Request<I>) -> Self::Future {
-        info!("req headers = {:?}", req.headers());
-        if self.request_checker.is_right_request_type::<I>(&req) {
+    fn call(&mut self, req: I) -> Self::Future {
+        if self.request_checker.is_right_request_type(&req) {
             RequestCounterFut::Monitored {
                 response_checker: self.request_checker.response_checker(),
                 counter_inner: self.counter_inner.clone(),
@@ -202,8 +253,8 @@ pub enum RequestCounterFut<C, F> {
 
 impl<C, F, O, E> Future for RequestCounterFut<C, F>
 where
-    C: CheckResponse<Response<O> = http::Response<O>>,
-    F: Future<Output = Result<http::Response<O>, E>>,
+    C: CheckResponse<Response = O>,
+    F: Future<Output = Result<O, E>>,
 {
     type Output = F::Output;
 
@@ -220,8 +271,7 @@ where
                 counters.counter += 1;
 
                 if let Ok(resp) = rdy.as_ref() {
-                    info!("resp headers = {:?}", resp.headers());
-                    if response_checker.is_successful_response::<O>(resp) {
+                    if response_checker.is_successful_response(resp) {
                         counters.counter_success += 1;
                     }
                 }
