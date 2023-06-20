@@ -1,10 +1,11 @@
 use tower::ServiceBuilder;
 use tracing::{info, info_span, instrument, Instrument};
 
-use tracing_showcase::grpc::proto::cards_service_client::CardsServiceClient;
-use tracing_showcase::grpc::proto::{DrawCardsRequest, NewDecksRequest};
-use tracing_showcase::layers::{inject_jaeger_context, GrpcCheckSuccess};
-use tracing_showcase::{layers::RequestCounterLayer, tracing_setup::init_tracing};
+use tracing_showcase::{
+    grpc::proto::{cards_service_client::CardsServiceClient, DrawCardsRequest, NewDecksRequest},
+    layers::{inject_jaeger_context, GrpcCheckSuccess, RequestCounterLayer},
+    tracing_setup::init_tracing,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -46,7 +47,7 @@ async fn run_client() -> anyhow::Result<()> {
     let drawn_hands = client
         .draw_cards(DrawCardsRequest {
             deck_id: decks.deck_id.clone(),
-            count: 4,
+            count: 5,
             hands: 20,
         })
         .instrument(info_span!("draw hands request"))

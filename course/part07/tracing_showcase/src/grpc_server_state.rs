@@ -8,12 +8,12 @@ use crate::{
     mongo::MongoRecordController,
 };
 
-pub struct CardsServiceStateInternal {
+pub struct CardsServiceState {
     cards_client: DeckOfCardsClient,
     record_controller: MongoRecordController,
 }
 
-impl CardsServiceStateInternal {
+impl CardsServiceState {
     pub(crate) fn new(
         cards_client: DeckOfCardsClient,
         record_controller: MongoRecordController,

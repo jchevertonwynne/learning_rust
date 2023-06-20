@@ -1,18 +1,21 @@
-use fxhash::FxBuildHasher;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::future::Future;
-use std::ops::{Deref, DerefMut};
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-use std::task::{ready, Context, Poll};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    future::Future,
+    ops::{Deref, DerefMut},
+    pin::Pin,
+    sync::{Arc, Mutex},
+    task::{ready, Context, Poll},
+};
 
+use fxhash::FxBuildHasher;
 use pin_project::pin_project;
-use tonic::codegen::Service;
-use tonic::metadata::{Ascii, MetadataKey, MetadataValue};
+use tonic::{
+    codegen::Service,
+    metadata::{Ascii, MetadataKey, MetadataValue},
+};
 use tower::Layer;
-use tracing::instrument::Instrumented;
-use tracing::{info, info_span, Instrument};
+use tracing::{info, info_span, instrument::Instrumented, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 #[derive(Debug, Clone, Default)]
@@ -28,8 +31,8 @@ pub struct RequestCounterInner {
 }
 
 trait SuccessChecker: Clone {
-    fn is_right_request_type<R>(&self, req: &http::Request<R>) -> bool;
-    fn is_successful_response<R>(&self, res: &http::Response<R>) -> bool;
+    fn is_right_request_type<Req>(&self, req: &http::Request<Req>) -> bool;
+    fn is_successful_response<Res>(&self, res: &http::Response<Res>) -> bool;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -42,14 +45,14 @@ impl GrpcCheckSuccess {
 }
 
 impl SuccessChecker for GrpcCheckSuccess {
-    fn is_right_request_type<R>(&self, req: &http::Request<R>) -> bool {
+    fn is_right_request_type<Req>(&self, req: &http::Request<Req>) -> bool {
         matches!(
             req.headers().get("Content-Type").map(|h| h.to_str()),
             Some(Ok("application/grpc"))
         )
     }
 
-    fn is_successful_response<R>(&self, res: &http::Response<R>) -> bool {
+    fn is_successful_response<Res>(&self, res: &http::Response<Res>) -> bool {
         res.status().is_success()
             && res
                 .headers()
@@ -69,11 +72,11 @@ impl HttpCheckSuccess {
 }
 
 impl SuccessChecker for HttpCheckSuccess {
-    fn is_right_request_type<R>(&self, _req: &http::Request<R>) -> bool {
+    fn is_right_request_type<Req>(&self, _req: &http::Request<Req>) -> bool {
         true
     }
 
-    fn is_successful_response<R>(&self, res: &http::Response<R>) -> bool {
+    fn is_successful_response<Res>(&self, res: &http::Response<Res>) -> bool {
         res.status().is_success()
     }
 }
@@ -213,7 +216,7 @@ where
 {
     type Response = S::Response;
     type Error = S::Error;
-    type Future = JaegerContextPropagatedFut<S::Future>;
+    type Future = StatusOrFuture<Instrumented<S::Future>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
@@ -236,9 +239,9 @@ where
                     let v = match v.to_str() {
                         Ok(v) => v,
                         Err(err) => {
-                            return JaegerContextPropagatedFut::Status(tonic::Status::internal(
-                                format!("failed to convert ascii string to str: {err}"),
-                            ))
+                            return StatusOrFuture::Status(tonic::Status::internal(format!(
+                                "failed to convert ascii string to str: {err}"
+                            )))
                         }
                     }
                     .to_string();
@@ -253,18 +256,18 @@ where
             });
 
             span.set_parent(parent_ctx);
-            JaegerContextPropagatedFut::Fut(Instrument::instrument(self.inner.call(req), span))
+            StatusOrFuture::Fut(Instrument::instrument(self.inner.call(req), span))
         })
     }
 }
 
-#[pin_project(project = JaegerContextPropagatedFutProj)]
-pub enum JaegerContextPropagatedFut<F> {
+#[pin_project(project = StatusOrFutureProj)]
+pub enum StatusOrFuture<F> {
     Status(tonic::Status),
-    Fut(#[pin] Instrumented<F>),
+    Fut(#[pin] F),
 }
 
-impl<F, ResBody, E> Future for JaegerContextPropagatedFut<F>
+impl<F, ResBody, E> Future for StatusOrFuture<F>
 where
     F: Future<Output = Result<http::Response<ResBody>, E>>,
     ResBody: Default,
@@ -273,13 +276,13 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.project() {
-            JaegerContextPropagatedFutProj::Status(s) => {
+            StatusOrFutureProj::Status(s) => {
                 // replace status with cheap to make dummy value
                 let s = std::mem::replace(s, tonic::Status::internal(""));
                 let (p, _) = s.to_http().into_parts();
                 Poll::Ready(Ok(http::Response::from_parts(p, ResBody::default())))
             }
-            JaegerContextPropagatedFutProj::Fut(f) => f.poll(cx),
+            StatusOrFutureProj::Fut(f) => f.poll(cx),
         }
     }
 }

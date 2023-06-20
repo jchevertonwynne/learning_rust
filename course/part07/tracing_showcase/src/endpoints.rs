@@ -1,17 +1,21 @@
-use crate::fake_deck_of_cards_api_state::FakeDeckOfCardsAPIState;
-use crate::model::{Card, Code, DeckID, DeckInfo, DrawnCardsInfo, Images, Suit, Value};
-use crate::mongo::RemoveCardsError;
-use axum::extract::{Path, Query, State};
-use axum::response::Response;
-use axum::Json;
+use axum::{
+    extract::{Path, Query, State},
+    response::Response,
+    Json,
+};
 use http::StatusCode;
 use rand::prelude::SliceRandom;
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
-use std::time::Duration;
+use std::{str::FromStr, time::Duration};
 use strum::IntoEnumIterator;
 use tracing::{info, instrument};
 use url::Url;
+
+use crate::{
+    fake_deck_of_cards_api_state::FakeDeckOfCardsAPIState,
+    model::{Card, Code, DeckID, DeckInfo, DrawnCardsInfo, Images, Suit, Value},
+    mongo::RemoveCardsError,
+};
 
 #[instrument(skip(app_state))]
 pub async fn new_decks(

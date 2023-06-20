@@ -1,18 +1,17 @@
 use std::net::ToSocketAddrs;
 
 use anyhow::Context;
-use axum::routing::get;
-use axum::Router;
+use axum::{routing::get, Router};
 use futures::FutureExt;
 use tower::ServiceBuilder;
 use tracing::info;
-use tracing_showcase::endpoints;
 
-use tracing_showcase::fake_deck_of_cards_api_state::FakeDeckOfCardsAPIState;
-use tracing_showcase::layers::{
-    HttpCheckSuccess, JaegerTracingContextPropagatorLayer, RequestCounterLayer,
+use tracing_showcase::{
+    endpoints,
+    fake_deck_of_cards_api_state::FakeDeckOfCardsAPIState,
+    layers::{HttpCheckSuccess, JaegerTracingContextPropagatorLayer, RequestCounterLayer},
+    tracing_setup::init_tracing,
 };
-use tracing_showcase::tracing_setup::init_tracing;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

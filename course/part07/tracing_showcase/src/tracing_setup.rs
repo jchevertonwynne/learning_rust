@@ -1,8 +1,11 @@
 use opentelemetry::trace::TraceError;
 use tracing::level_filters::LevelFilter;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::{SubscriberInitExt, TryInitError};
-use tracing_subscriber::{EnvFilter, Registry};
+use tracing_subscriber::{
+    layer::SubscriberExt,
+    util::{SubscriberInitExt, TryInitError},
+    EnvFilter,
+    Registry,
+};
 
 pub fn init_tracing(service_name: &str) -> Result<(), TracingSetupError> {
     opentelemetry::global::set_text_map_propagator(opentelemetry_jaeger::Propagator::new());

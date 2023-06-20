@@ -5,15 +5,16 @@
 use futures::FutureExt;
 use tower::ServiceBuilder;
 use tracing::info;
-use tracing_showcase::grpc::proto::cards_service_server::CardsServiceServer;
-use tracing_showcase::grpc::CardsServiceState;
 use url::Url;
 
-use tracing_showcase::deck_of_cards::DeckOfCardsClient;
-use tracing_showcase::layers::{GrpcCheckSuccess, JaegerTracingContextPropagatorLayer};
-use tracing_showcase::middleware::JaegerContextPropagatorMiddleware;
-use tracing_showcase::mongo::MongoRecordController;
-use tracing_showcase::{layers::RequestCounterLayer, tracing_setup::init_tracing};
+use tracing_showcase::{
+    deck_of_cards::DeckOfCardsClient,
+    grpc::{proto::cards_service_server::CardsServiceServer, CardsService},
+    layers::{GrpcCheckSuccess, JaegerTracingContextPropagatorLayer, RequestCounterLayer},
+    middleware::JaegerContextPropagatorMiddleware,
+    mongo::MongoRecordController,
+    tracing_setup::init_tracing,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -36,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
     )?;
     let cards_client = DeckOfCardsClient::new(url, client);
 
-    let service = CardsServiceState::new(cards_client, record_controller);
+    let service = CardsService::new(cards_client, record_controller);
 
     let addr = ([127, 0, 0, 1], 25565).into();
 

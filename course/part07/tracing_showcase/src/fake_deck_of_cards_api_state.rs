@@ -1,6 +1,9 @@
-use crate::model::{Card, DeckID};
-use crate::mongo::{MongoRecordController, RemoveCardsError};
 use tracing::instrument;
+
+use crate::{
+    model::{Card, DeckID},
+    mongo::{MongoRecordController, RemoveCardsError},
+};
 
 #[derive(Clone)]
 pub struct FakeDeckOfCardsAPIState {

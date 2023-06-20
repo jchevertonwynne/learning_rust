@@ -3,9 +3,7 @@ use fxhash::FxBuildHasher;
 use http::{HeaderName, HeaderValue};
 use reqwest::{Request, Response};
 use reqwest_middleware::Next;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::ops::DerefMut;
+use std::{cell::RefCell, collections::HashMap, ops::DerefMut};
 use task_local_extensions::Extensions;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 

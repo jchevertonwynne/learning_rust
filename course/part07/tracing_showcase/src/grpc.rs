@@ -1,28 +1,30 @@
-use crate::deck_of_cards::DeckOfCardsClient;
-use crate::mongo::MongoRecordController;
 use async_trait::async_trait;
 use tracing::instrument;
 
-use crate::grpc_server_state::{CardsServiceStateInternal, DrawCardsRequest, NewDecksRequest};
+use crate::{
+    deck_of_cards::DeckOfCardsClient,
+    grpc_server_state::{CardsServiceState, DrawCardsRequest, NewDecksRequest},
+    mongo::MongoRecordController,
+};
 
 pub mod proto {
     tonic::include_proto!("cards");
 }
 
-pub struct CardsServiceState {
-    cards_service_internal: CardsServiceStateInternal,
+pub struct CardsService {
+    cards_service_internal: CardsServiceState,
 }
 
-impl CardsServiceState {
+impl CardsService {
     pub fn new(cards_client: DeckOfCardsClient, record_controller: MongoRecordController) -> Self {
         Self {
-            cards_service_internal: CardsServiceStateInternal::new(cards_client, record_controller),
+            cards_service_internal: CardsServiceState::new(cards_client, record_controller),
         }
     }
 }
 
 #[async_trait]
-impl proto::cards_service_server::CardsService for CardsServiceState {
+impl proto::cards_service_server::CardsService for CardsService {
     #[instrument(skip(self, request))]
     async fn new_decks(
         &self,
