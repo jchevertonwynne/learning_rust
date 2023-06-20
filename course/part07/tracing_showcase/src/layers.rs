@@ -18,15 +18,15 @@ use tower::Layer;
 use tracing::{info, info_span, instrument::Instrumented, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-pub trait RequestChecker: Clone {
+pub trait CheckRequest: Clone {
     type Request<Req>;
-    type ResponseChecker: ResponseChecker;
+    type ResponseChecker: CheckResponse;
 
     fn is_right_request_type<Req>(&self, req: &Self::Request<Req>) -> bool;
     fn response_checker(&self) -> Self::ResponseChecker;
 }
 
-pub trait ResponseChecker: Clone {
+pub trait CheckResponse: Clone {
     type Response<Res>;
 
     fn is_successful_response<Res>(&self, res: &Self::Response<Res>) -> bool;
@@ -41,7 +41,7 @@ impl GrpcCheckRequest {
     }
 }
 
-impl RequestChecker for GrpcCheckRequest {
+impl CheckRequest for GrpcCheckRequest {
     type Request<Req> = http::Request<Req>;
     type ResponseChecker = GrpcCheckResponse;
 
@@ -66,7 +66,7 @@ impl GrpcCheckResponse {
     }
 }
 
-impl ResponseChecker for GrpcCheckResponse {
+impl CheckResponse for GrpcCheckResponse {
     type Response<Res> = http::Response<Res>;
 
     fn is_successful_response<Res>(&self, res: &http::Response<Res>) -> bool {
@@ -88,7 +88,7 @@ impl HttpCheckRequest {
     }
 }
 
-impl RequestChecker for HttpCheckRequest {
+impl CheckRequest for HttpCheckRequest {
     type Request<Req> = http::Request<Req>;
     type ResponseChecker = HttpCheckResponse;
 
@@ -110,7 +110,7 @@ impl HttpCheckResponse {
     }
 }
 
-impl ResponseChecker for HttpCheckResponse {
+impl CheckResponse for HttpCheckResponse {
     type Response<Res> = http::Response<Res>;
 
     fn is_successful_response<Res>(&self, res: &http::Response<Res>) -> bool {
@@ -163,8 +163,8 @@ pub struct RequestCounterService<C, S> {
 
 impl<C, S, I, O> Service<http::Request<I>> for RequestCounterService<C, S>
 where
-    C: RequestChecker<Request<I> = http::Request<I>>,
-    C::ResponseChecker: ResponseChecker<Response<O> = http::Response<O>>,
+    C: CheckRequest<Request<I> = http::Request<I>>,
+    C::ResponseChecker: CheckResponse<Response<O> = http::Response<O>>,
     S: Service<http::Request<I>, Response = http::Response<O>>,
 {
     type Response = S::Response;
@@ -203,7 +203,7 @@ pub enum RequestCounterFut<C, F> {
 
 impl<C, F, O, E> Future for RequestCounterFut<C, F>
 where
-    C: ResponseChecker<Response<O> = http::Response<O>>,
+    C: CheckResponse<Response<O> = http::Response<O>>,
     F: Future<Output = Result<http::Response<O>, E>>,
 {
     type Output = F::Output;
