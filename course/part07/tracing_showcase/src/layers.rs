@@ -1,11 +1,13 @@
 use std::{
     cell::RefCell,
     collections::HashMap,
+    fmt::Debug,
     future::Future,
+    marker::PhantomData,
     ops::{Deref, DerefMut},
     pin::Pin,
     sync::{Arc, Mutex},
-    task::{ready, Context, Poll}, marker::PhantomData, fmt::Debug,
+    task::{ready, Context, Poll},
 };
 
 use fxhash::FxBuildHasher;
@@ -22,8 +24,7 @@ pub trait CheckRequest: Clone {
     type Request;
     type ResponseChecker: CheckResponse;
 
-    fn is_right_request_type(&self, req: &Self::Request) -> bool;
-    fn response_checker(&self) -> Self::ResponseChecker;
+    fn is_right_request_type(&self, req: &Self::Request) -> Option<Self::ResponseChecker>;
 }
 
 pub trait CheckResponse: Clone {
@@ -33,17 +34,17 @@ pub trait CheckResponse: Clone {
 }
 
 #[derive(Debug)]
-pub struct GrpcCheckRequest<I, O> (PhantomData<(I, O)>);
+pub struct GrpcCheckRequest<I, O>(PhantomData<(I, O)>);
 
 impl<I, O> Clone for GrpcCheckRequest<I, O> {
     fn clone(&self) -> Self {
         Self::default()
     }
-} 
+}
 
 impl<I, O> Default for GrpcCheckRequest<I, O> {
     fn default() -> Self {
-        Self(PhantomData{})
+        Self(PhantomData {})
     }
 }
 
@@ -57,31 +58,28 @@ impl<I, O> CheckRequest for GrpcCheckRequest<I, O> {
     type Request = http::Request<I>;
     type ResponseChecker = GrpcCheckResponse<O>;
 
-    fn is_right_request_type(&self, req: &http::Request<I>) -> bool {
+    fn is_right_request_type(&self, req: &http::Request<I>) -> Option<GrpcCheckResponse<O>> {
         info!("headers = {:?}", req.headers());
         matches!(
             req.headers().get("Content-Type").map(|h| h.to_str()),
             Some(Ok("application/grpc"))
         )
-    }
-
-    fn response_checker(&self) -> Self::ResponseChecker {
-        GrpcCheckResponse::new()
+        .then_some(GrpcCheckResponse::new())
     }
 }
 
 #[derive(Debug)]
-pub struct GrpcCheckResponse<O> (PhantomData<O>);
+pub struct GrpcCheckResponse<O>(PhantomData<O>);
 
 impl<O> Clone for GrpcCheckResponse<O> {
     fn clone(&self) -> Self {
         Self::default()
     }
-} 
+}
 
 impl<O> Default for GrpcCheckResponse<O> {
     fn default() -> Self {
-        Self(PhantomData{})
+        Self(PhantomData {})
     }
 }
 
@@ -106,17 +104,17 @@ impl<O> CheckResponse for GrpcCheckResponse<O> {
 }
 
 #[derive(Debug)]
-pub struct HttpCheckRequest<I, O> (PhantomData<(I, O)>);
+pub struct HttpCheckRequest<I, O>(PhantomData<(I, O)>);
 
 impl<I, O> Clone for HttpCheckRequest<I, O> {
     fn clone(&self) -> Self {
         Self::default()
     }
-} 
+}
 
 impl<I, O> Default for HttpCheckRequest<I, O> {
     fn default() -> Self {
-        Self(PhantomData{})
+        Self(PhantomData {})
     }
 }
 
@@ -130,28 +128,24 @@ impl<I, O> CheckRequest for HttpCheckRequest<I, O> {
     type Request = http::Request<I>;
     type ResponseChecker = HttpCheckResponse<O>;
 
-    fn is_right_request_type(&self, req: &http::Request<I>) -> bool {
+    fn is_right_request_type(&self, req: &http::Request<I>) -> Option<HttpCheckResponse<O>> {
         info!("headers = {:?}", req.headers());
-        true
-    }
-
-    fn response_checker(&self) -> Self::ResponseChecker {
-        HttpCheckResponse::new()
+        Some(HttpCheckResponse::new())
     }
 }
 
 #[derive(Debug)]
-pub struct HttpCheckResponse<O> (PhantomData<O>);
+pub struct HttpCheckResponse<O>(PhantomData<O>);
 
 impl<O> Clone for HttpCheckResponse<O> {
     fn clone(&self) -> Self {
         Self::default()
     }
-} 
+}
 
 impl<O> Default for HttpCheckResponse<O> {
     fn default() -> Self {
-        Self(PhantomData{})
+        Self(PhantomData {})
     }
 }
 
@@ -228,9 +222,9 @@ where
     }
 
     fn call(&mut self, req: I) -> Self::Future {
-        if self.request_checker.is_right_request_type(&req) {
+        if let Some(response_checker) = self.request_checker.is_right_request_type(&req) {
             RequestCounterFut::Monitored {
-                response_checker: self.request_checker.response_checker(),
+                response_checker,
                 counter_inner: self.counter_inner.clone(),
                 fut: self.inner.call(req),
             }
