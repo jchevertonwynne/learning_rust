@@ -18,39 +18,56 @@ use tower::Layer;
 use tracing::{info, info_span, instrument::Instrumented, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-#[derive(Debug, Clone, Default)]
-pub struct RequestCounterLayer<C> {
-    success_checker: C,
-    counter_inner: Arc<Mutex<RequestCounterInner>>,
+pub trait RequestChecker: Clone {
+    type Request<Req>;
+    type ResponseChecker: ResponseChecker;
+
+    fn is_right_request_type<Req>(&self, req: &Self::Request<Req>) -> bool;
+    fn response_checker(&self) -> Self::ResponseChecker;
 }
 
-#[derive(Debug, Default)]
-pub struct RequestCounterInner {
-    counter: usize,
-    counter_success: usize,
-}
+pub trait ResponseChecker: Clone {
+    type Response<Res>;
 
-trait SuccessChecker: Clone {
-    fn is_right_request_type<Req>(&self, req: &http::Request<Req>) -> bool;
-    fn is_successful_response<Res>(&self, res: &http::Response<Res>) -> bool;
+    fn is_successful_response<Res>(&self, res: &Self::Response<Res>) -> bool;
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct GrpcCheckSuccess {}
+pub struct GrpcCheckRequest {}
 
-impl GrpcCheckSuccess {
+impl GrpcCheckRequest {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl SuccessChecker for GrpcCheckSuccess {
+impl RequestChecker for GrpcCheckRequest {
+    type Request<Req> = http::Request<Req>;
+    type ResponseChecker = GrpcCheckResponse;
+
     fn is_right_request_type<Req>(&self, req: &http::Request<Req>) -> bool {
         matches!(
             req.headers().get("Content-Type").map(|h| h.to_str()),
             Some(Ok("application/grpc"))
         )
     }
+
+    fn response_checker(&self) -> Self::ResponseChecker {
+        GrpcCheckResponse::new()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GrpcCheckResponse {}
+
+impl GrpcCheckResponse {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl ResponseChecker for GrpcCheckResponse {
+    type Response<Res> = http::Response<Res>;
 
     fn is_successful_response<Res>(&self, res: &http::Response<Res>) -> bool {
         res.status().is_success()
@@ -63,28 +80,60 @@ impl SuccessChecker for GrpcCheckSuccess {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct HttpCheckSuccess {}
+pub struct HttpCheckRequest {}
 
-impl HttpCheckSuccess {
+impl HttpCheckRequest {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl SuccessChecker for HttpCheckSuccess {
+impl RequestChecker for HttpCheckRequest {
+    type Request<Req> = http::Request<Req>;
+    type ResponseChecker = HttpCheckResponse;
+
     fn is_right_request_type<Req>(&self, _req: &http::Request<Req>) -> bool {
         true
     }
+
+    fn response_checker(&self) -> Self::ResponseChecker {
+        HttpCheckResponse::new()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct HttpCheckResponse {}
+
+impl HttpCheckResponse {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl ResponseChecker for HttpCheckResponse {
+    type Response<Res> = http::Response<Res>;
 
     fn is_successful_response<Res>(&self, res: &http::Response<Res>) -> bool {
         res.status().is_success()
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct RequestCounterLayer<C> {
+    request_checker: C,
+    counter_inner: Arc<Mutex<RequestCounterInner>>,
+}
+
+#[derive(Debug, Default)]
+pub struct RequestCounterInner {
+    counter: usize,
+    counter_success: usize,
+}
+
 impl<C> RequestCounterLayer<C> {
-    pub fn new(success_checker: C) -> Self {
+    pub fn new(request_checker: C) -> Self {
         Self {
-            success_checker,
+            request_checker,
             counter_inner: Default::default(),
         }
     }
@@ -92,13 +141,13 @@ impl<C> RequestCounterLayer<C> {
 
 impl<C, S> Layer<S> for RequestCounterLayer<C>
 where
-    C: SuccessChecker,
+    C: Clone,
 {
     type Service = RequestCounterService<C, S>;
 
     fn layer(&self, inner: S) -> Self::Service {
         Self::Service {
-            success_checker: self.success_checker.clone(),
+            request_checker: self.request_checker.clone(),
             counter_inner: self.counter_inner.clone(),
             inner,
         }
@@ -107,30 +156,31 @@ where
 
 #[derive(Debug, Clone)]
 pub struct RequestCounterService<C, S> {
-    success_checker: C,
+    request_checker: C,
     counter_inner: Arc<Mutex<RequestCounterInner>>,
     inner: S,
 }
 
-impl<C, S, Req, Res> Service<http::Request<Req>> for RequestCounterService<C, S>
+impl<C, S, I, O> Service<http::Request<I>> for RequestCounterService<C, S>
 where
-    C: SuccessChecker,
-    S: Service<http::Request<Req>, Response = http::Response<Res>>,
+    C: RequestChecker<Request<I> = http::Request<I>>,
+    C::ResponseChecker: ResponseChecker<Response<O> = http::Response<O>>,
+    S: Service<http::Request<I>, Response = http::Response<O>>,
 {
     type Response = S::Response;
     type Error = S::Error;
-    type Future = RequestCounterFut<C, S::Future>;
+    type Future = RequestCounterFut<C::ResponseChecker, S::Future>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: http::Request<Req>) -> Self::Future {
+    fn call(&mut self, req: http::Request<I>) -> Self::Future {
         info!("req headers = {:?}", req.headers());
-        if self.success_checker.is_right_request_type(&req) {
+        if self.request_checker.is_right_request_type::<I>(&req) {
             self.counter_inner.lock().unwrap().counter += 1;
-            RequestCounterFut::Grpc {
-                success_checker: self.success_checker.clone(),
+            RequestCounterFut::Monitored {
+                response_checker: self.request_checker.response_checker(),
                 counter_inner: self.counter_inner.clone(),
                 fut: self.inner.call(req),
             }
@@ -142,8 +192,8 @@ where
 
 #[pin_project(project = RequestCounterFutProj)]
 pub enum RequestCounterFut<C, F> {
-    Grpc {
-        success_checker: C,
+    Monitored {
+        response_checker: C,
         counter_inner: Arc<Mutex<RequestCounterInner>>,
         #[pin]
         fut: F,
@@ -151,18 +201,18 @@ pub enum RequestCounterFut<C, F> {
     Other(#[pin] F),
 }
 
-impl<C, F, R, E> Future for RequestCounterFut<C, F>
+impl<C, F, O, E> Future for RequestCounterFut<C, F>
 where
-    C: SuccessChecker,
-    F: Future<Output = Result<http::Response<R>, E>>,
+    C: ResponseChecker<Response<O> = http::Response<O>>,
+    F: Future<Output = Result<http::Response<O>, E>>,
 {
     type Output = F::Output;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         match this {
-            RequestCounterFutProj::Grpc {
-                success_checker,
+            RequestCounterFutProj::Monitored {
+                response_checker,
                 counter_inner,
                 fut,
             } => {
@@ -171,7 +221,7 @@ where
 
                 if let Ok(resp) = rdy.as_ref() {
                     info!("resp headers = {:?}", resp.headers());
-                    if success_checker.is_successful_response(resp) {
+                    if response_checker.is_successful_response::<O>(resp) {
                         counters.counter_success += 1;
                     }
                 }

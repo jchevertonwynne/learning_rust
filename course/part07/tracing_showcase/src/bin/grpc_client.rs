@@ -3,7 +3,7 @@ use tracing::{info, info_span, instrument, Instrument};
 
 use tracing_showcase::{
     grpc::proto::{cards_service_client::CardsServiceClient, DrawCardsRequest, NewDecksRequest},
-    layers::{inject_jaeger_context, GrpcCheckSuccess, RequestCounterLayer},
+    layers::{inject_jaeger_context, GrpcCheckRequest, RequestCounterLayer},
     tracing_setup::init_tracing,
 };
 
@@ -33,7 +33,7 @@ async fn run_client() -> anyhow::Result<()> {
         .layer(
             ServiceBuilder::new()
                 .layer(tonic::service::interceptor(inject_jaeger_context))
-                .layer(RequestCounterLayer::new(GrpcCheckSuccess::new())),
+                .layer(RequestCounterLayer::new(GrpcCheckRequest::new())),
         )
         .service(channel);
     let mut client = CardsServiceClient::new(client);

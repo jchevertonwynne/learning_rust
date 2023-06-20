@@ -10,7 +10,7 @@ use url::Url;
 use tracing_showcase::{
     deck_of_cards::DeckOfCardsClient,
     grpc::{proto::cards_service_server::CardsServiceServer, CardsService},
-    layers::{GrpcCheckSuccess, JaegerTracingContextPropagatorLayer, RequestCounterLayer},
+    layers::{GrpcCheckRequest, JaegerTracingContextPropagatorLayer, RequestCounterLayer},
     middleware::JaegerContextPropagatorMiddleware,
     mongo::MongoRecordController,
     tracing_setup::init_tracing,
@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(
             ServiceBuilder::new()
                 .layer(JaegerTracingContextPropagatorLayer::new())
-                .layer(RequestCounterLayer::new(GrpcCheckSuccess::new())),
+                .layer(RequestCounterLayer::new(GrpcCheckRequest::new())),
         )
         .add_service(CardsServiceServer::new(service))
         .serve_with_shutdown(addr, shutdown)
