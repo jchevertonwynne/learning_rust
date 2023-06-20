@@ -22,7 +22,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 pub trait CheckRequest: Clone {
     type Request;
-    type ResponseChecker: CheckResponse;
+    type ResponseChecker;
 
     fn is_right_request_type(&self, req: &Self::Request) -> Option<Self::ResponseChecker>;
 }
