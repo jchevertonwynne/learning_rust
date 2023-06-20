@@ -178,7 +178,6 @@ where
     fn call(&mut self, req: http::Request<I>) -> Self::Future {
         info!("req headers = {:?}", req.headers());
         if self.request_checker.is_right_request_type::<I>(&req) {
-            self.counter_inner.lock().unwrap().counter += 1;
             RequestCounterFut::Monitored {
                 response_checker: self.request_checker.response_checker(),
                 counter_inner: self.counter_inner.clone(),
@@ -218,6 +217,7 @@ where
             } => {
                 let rdy = ready!(fut.poll(cx));
                 let mut counters = counter_inner.lock().unwrap();
+                counters.counter += 1;
 
                 if let Ok(resp) = rdy.as_ref() {
                     info!("resp headers = {:?}", resp.headers());
