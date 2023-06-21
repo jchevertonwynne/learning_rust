@@ -20,16 +20,11 @@ use tower::Layer;
 use tracing::{info, info_span, instrument::Instrumented, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-pub trait CheckRequest: Clone {
+pub trait SuccessChecker: Clone {
     type Request;
-    type ResponseChecker;
-
-    fn is_right_request_type(&self, req: &Self::Request) -> Option<Self::ResponseChecker>;
-}
-
-pub trait CheckResponse: Clone {
     type Response;
 
+    fn should_monitor_response(&self, req: &Self::Request) -> bool;
     fn is_successful_response(&self, res: &Self::Response) -> bool;
 }
 
@@ -54,43 +49,17 @@ impl<I, O> GrpcCheckRequest<I, O> {
     }
 }
 
-impl<I, O> CheckRequest for GrpcCheckRequest<I, O> {
+impl<I, O> SuccessChecker for GrpcCheckRequest<I, O> {
     type Request = http::Request<I>;
-    type ResponseChecker = GrpcCheckResponse<O>;
+    type Response = http::Response<O>;
 
-    fn is_right_request_type(&self, req: &http::Request<I>) -> Option<GrpcCheckResponse<O>> {
+    fn should_monitor_response(&self, req: &http::Request<I>) -> bool {
         info!("headers = {:?}", req.headers());
         matches!(
             req.headers().get("Content-Type").map(|h| h.to_str()),
             Some(Ok("application/grpc"))
         )
-        .then_some(GrpcCheckResponse::new())
     }
-}
-
-#[derive(Debug)]
-pub struct GrpcCheckResponse<O>(PhantomData<O>);
-
-impl<O> Clone for GrpcCheckResponse<O> {
-    fn clone(&self) -> Self {
-        Self::default()
-    }
-}
-
-impl<O> Default for GrpcCheckResponse<O> {
-    fn default() -> Self {
-        Self(PhantomData {})
-    }
-}
-
-impl<O> GrpcCheckResponse<O> {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-impl<O> CheckResponse for GrpcCheckResponse<O> {
-    type Response = http::Response<O>;
 
     fn is_successful_response(&self, res: &http::Response<O>) -> bool {
         info!("headers = {:?}", res.headers());
@@ -104,61 +73,36 @@ impl<O> CheckResponse for GrpcCheckResponse<O> {
 }
 
 #[derive(Debug)]
-pub struct HttpCheckRequest<I, O>(PhantomData<(I, O)>);
+pub struct HttpChecker<I, O>(PhantomData<(I, O)>);
 
-impl<I, O> Clone for HttpCheckRequest<I, O> {
+impl<I, O> Clone for HttpChecker<I, O> {
     fn clone(&self) -> Self {
         Self::default()
     }
 }
 
-impl<I, O> Default for HttpCheckRequest<I, O> {
+impl<I, O> Default for HttpChecker<I, O> {
     fn default() -> Self {
         Self(PhantomData {})
     }
 }
 
-impl<I, O> HttpCheckRequest<I, O> {
+impl<I, O> HttpChecker<I, O> {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl<I, O> CheckRequest for HttpCheckRequest<I, O> {
+impl<I, O> SuccessChecker for HttpChecker<I, O> {
     type Request = http::Request<I>;
-    type ResponseChecker = HttpCheckResponse<O>;
-
-    fn is_right_request_type(&self, req: &http::Request<I>) -> Option<HttpCheckResponse<O>> {
-        info!("headers = {:?}", req.headers());
-        Some(HttpCheckResponse::new())
-    }
-}
-
-#[derive(Debug)]
-pub struct HttpCheckResponse<O>(PhantomData<O>);
-
-impl<O> Clone for HttpCheckResponse<O> {
-    fn clone(&self) -> Self {
-        Self::default()
-    }
-}
-
-impl<O> Default for HttpCheckResponse<O> {
-    fn default() -> Self {
-        Self(PhantomData {})
-    }
-}
-
-impl<O> HttpCheckResponse<O> {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-impl<O> CheckResponse for HttpCheckResponse<O> {
     type Response = http::Response<O>;
 
-    fn is_successful_response(&self, res: &http::Response<O>) -> bool {
+    fn should_monitor_response(&self, req: &http::Request<I>) -> bool {
+        info!("headers = {:?}", req.headers());
+        true
+    }
+
+    fn is_successful_response(&self, res: &Self::Response) -> bool {
         info!("headers = {:?}", res.headers());
         res.status().is_success()
     }
@@ -193,7 +137,7 @@ where
 
     fn layer(&self, inner: S) -> Self::Service {
         Self::Service {
-            request_checker: self.request_checker.clone(),
+            req_res_checker: self.request_checker.clone(),
             counter_inner: self.counter_inner.clone(),
             inner,
         }
@@ -202,29 +146,28 @@ where
 
 #[derive(Debug, Clone)]
 pub struct RequestCounterService<C, S> {
-    request_checker: C,
+    req_res_checker: C,
     counter_inner: Arc<Mutex<RequestCounterInner>>,
     inner: S,
 }
 
 impl<C, S, I, O> Service<I> for RequestCounterService<C, S>
 where
-    C: CheckRequest<Request = I>,
-    C::ResponseChecker: CheckResponse<Response = O>,
+    C: SuccessChecker<Request = I, Response = O>,
     S: Service<I, Response = O>,
 {
     type Response = S::Response;
     type Error = S::Error;
-    type Future = RequestCounterFut<C::ResponseChecker, S::Future>;
+    type Future = RequestCounterFut<C, S::Future>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
 
     fn call(&mut self, req: I) -> Self::Future {
-        if let Some(response_checker) = self.request_checker.is_right_request_type(&req) {
+        if self.req_res_checker.should_monitor_response(&req) {
             RequestCounterFut::Monitored {
-                response_checker,
+                req_res_checker: self.req_res_checker.clone(),
                 counter_inner: self.counter_inner.clone(),
                 fut: self.inner.call(req),
             }
@@ -237,7 +180,7 @@ where
 #[pin_project(project = RequestCounterFutProj)]
 pub enum RequestCounterFut<C, F> {
     Monitored {
-        response_checker: C,
+        req_res_checker: C,
         counter_inner: Arc<Mutex<RequestCounterInner>>,
         #[pin]
         fut: F,
@@ -247,7 +190,7 @@ pub enum RequestCounterFut<C, F> {
 
 impl<C, F, O, E> Future for RequestCounterFut<C, F>
 where
-    C: CheckResponse<Response = O>,
+    C: SuccessChecker<Response = O>,
     F: Future<Output = Result<O, E>>,
 {
     type Output = F::Output;
@@ -256,7 +199,7 @@ where
         let this = self.project();
         match this {
             RequestCounterFutProj::Monitored {
-                response_checker,
+                req_res_checker,
                 counter_inner,
                 fut,
             } => {
@@ -265,7 +208,7 @@ where
                 counters.counter += 1;
 
                 if let Ok(resp) = rdy.as_ref() {
-                    if response_checker.is_successful_response(resp) {
+                    if req_res_checker.is_successful_response(resp) {
                         counters.counter_success += 1;
                     }
                 }

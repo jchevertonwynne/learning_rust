@@ -1,22 +1,35 @@
-use std::{sync::{Arc, Mutex}, pin::Pin};
+use std::{pin::Pin, sync::Arc};
 
 use futures::Future;
 use redis::aio::ConnectionLike;
+use tokio::sync::Mutex;
 use tower::{Service, ServiceBuilder};
-use tracing::info;
-use tracing_showcase::{layers::{CheckRequest, CheckResponse, RequestCounterLayer}, tracing_setup::init_tracing};
+use tracing::{info, info_span, Instrument};
+use tracing_showcase::{
+    layers::{RequestCounterLayer, SuccessChecker},
+    tracing_setup::init_tracing,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing("redis stuff")?;
 
+    let span = info_span!("running redis");
+    let entered = span.entered();
+
     info!("hello!");
 
     let r = redis::Client::open("redis://127.0.0.1:6379")?;
-    let conn = Arc::new(Mutex::new(r.get_tokio_connection().await?));
+    let conn = Arc::new(Mutex::new(
+        r.get_tokio_connection()
+            .instrument(info_span!("connecting to redis"))
+            .await?,
+    ));
 
     let mut service = ServiceBuilder::new()
-        .layer(RequestCounterLayer::new(RedisRequestChecker::default()))
+        .layer(RequestCounterLayer::new(RedisChecker::new(
+            redis::Value::Data("world2".as_bytes().iter().map(|b| *b).collect::<Vec<u8>>()),
+        )))
         .service(RedisService { conn });
 
     service.call(redis::Cmd::set("hello", "world")).await?;
@@ -29,31 +42,34 @@ async fn main() -> anyhow::Result<()> {
 
     info!("goodbye from redis!");
 
+    entered.exit();
+
+    opentelemetry::global::shutdown_tracer_provider();
+
     Ok(())
 }
 
-#[derive(Debug, Clone, Default)]
-struct RedisRequestChecker {}
+#[derive(Debug, Clone)]
+struct RedisChecker {
+    wanted: redis::Value,
+}
 
-#[derive(Debug, Clone, Default)]
-struct RedisResponseChecker {}
-
-impl CheckRequest for RedisRequestChecker {
-    type Request = redis::Cmd;
-
-    type ResponseChecker = RedisResponseChecker;
-
-    fn is_right_request_type(&self, _req: &Self::Request) -> Option<Self::ResponseChecker> {
-        Some(RedisResponseChecker::default())
+impl RedisChecker {
+    fn new(wanted: redis::Value) -> Self {
+        Self { wanted }
     }
 }
 
-impl CheckResponse for RedisResponseChecker {
+impl SuccessChecker for RedisChecker {
+    type Request = redis::Cmd;
     type Response = redis::Value;
 
+    fn should_monitor_response(&self, _req: &Self::Request) -> bool {
+        true
+    }
+
     fn is_successful_response(&self, res: &Self::Response) -> bool {
-        let expected = "world2".as_bytes().iter().map(|b| *b).collect::<Vec<u8>>();
-        res == &redis::Value::Data(expected)
+        res == &self.wanted
     }
 }
 
@@ -77,7 +93,10 @@ impl Service<redis::Cmd> for RedisService {
 
     fn call(&mut self, req: redis::Cmd) -> Self::Future {
         let conn = self.conn.clone();
-        Box::pin(async move { conn.lock().unwrap().req_packed_command(&req).await })
+        Box::pin(
+            async move { conn.lock().await.req_packed_command(&req).await }
+                .instrument(info_span!("making a redis request")),
+        )
     }
 }
 

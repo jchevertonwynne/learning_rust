@@ -9,7 +9,7 @@ use tracing::info;
 use tracing_showcase::{
     endpoints,
     fake_deck_of_cards_api_state::FakeDeckOfCardsAPIState,
-    layers::{HttpCheckRequest, JaegerTracingContextPropagatorLayer, RequestCounterLayer},
+    layers::{HttpChecker, JaegerTracingContextPropagatorLayer, RequestCounterLayer},
     tracing_setup::init_tracing,
 };
 
@@ -30,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(
             ServiceBuilder::new()
                 .layer(JaegerTracingContextPropagatorLayer::new())
-                .layer(RequestCounterLayer::new(HttpCheckRequest::new())),
+                .layer(RequestCounterLayer::new(HttpChecker::new())),
         )
         .with_state(app_state);
 
