@@ -224,32 +224,31 @@ where
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct JaegerTracingContextPropagatorLayer {}
+pub struct JaegerPropagatedTracingContextConsumerLayer {}
 
-impl JaegerTracingContextPropagatorLayer {
+impl JaegerPropagatedTracingContextConsumerLayer {
     pub fn new() -> Self {
-        JaegerTracingContextPropagatorLayer {}
+        JaegerPropagatedTracingContextConsumerLayer::default()
     }
 }
 
-impl<S> Layer<S> for JaegerTracingContextPropagatorLayer {
-    type Service = JaegerTracingContextPropagatorService<S>;
+impl<S> Layer<S> for JaegerPropagatedTracingContextConsumerLayer {
+    type Service = JaegerPropagatedTracingContextConsumerService<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        JaegerTracingContextPropagatorService { inner }
+        JaegerPropagatedTracingContextConsumerService { inner }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct JaegerTracingContextPropagatorService<S> {
+pub struct JaegerPropagatedTracingContextConsumerService<S> {
     inner: S,
 }
 
-impl<S, ReqBody, ResBody> Service<http::Request<ReqBody>>
-    for JaegerTracingContextPropagatorService<S>
+impl<S, I, O> Service<http::Request<I>> for JaegerPropagatedTracingContextConsumerService<S>
 where
-    S: Service<http::Request<ReqBody>, Response = http::Response<ResBody>>,
-    ResBody: Default,
+    S: Service<http::Request<I>, Response = http::Response<O>>,
+    O: Default,
 {
     type Response = S::Response;
     type Error = S::Error;
@@ -259,7 +258,7 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: http::Request<ReqBody>) -> Self::Future {
+    fn call(&mut self, req: http::Request<I>) -> Self::Future {
         std::thread_local! {
             static PARENT_CTX_MAP: RefCell<HashMap<String, String, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
         }
@@ -324,14 +323,14 @@ where
     }
 }
 
-pub fn inject_jaeger_context(
+pub fn jaeger_tracing_context_propagator(
     mut req: tonic::Request<()>,
 ) -> Result<tonic::Request<()>, tonic::Status> {
     std::thread_local! {
         static PARENT_CTX_MAP: RefCell<HashMap<String, String, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
     }
 
-    PARENT_CTX_MAP.with(|parent_ctx_map| {
+    PARENT_CTX_MAP.with::<_, Result<(), tonic::Status>>(|parent_ctx_map| {
         let mut parent_ctx_map = parent_ctx_map.borrow_mut();
         parent_ctx_map.clear();
 
@@ -343,17 +342,17 @@ pub fn inject_jaeger_context(
 
         let md = req.metadata_mut();
         for (k, v) in parent_ctx_map.drain() {
-            let k = match k.parse::<MetadataKey<Ascii>>() {
-                Ok(k) => k,
-                Err(err) => return Err(tonic::Status::internal(err.to_string())),
-            };
-            let v = match v.parse::<MetadataValue<Ascii>>() {
-                Ok(v) => v,
-                Err(err) => return Err(tonic::Status::internal(err.to_string())),
-            };
+            let k = k
+                .parse::<MetadataKey<Ascii>>()
+                .map_err(|err| tonic::Status::internal(err.to_string()))?;
+            let v = v
+                .parse::<MetadataValue<Ascii>>()
+                .map_err(|err| tonic::Status::internal(err.to_string()))?;
             md.insert(k, v);
         }
 
-        Ok(req)
-    })
+        Ok(())
+    })?;
+
+    Ok(req)
 }

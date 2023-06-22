@@ -3,7 +3,7 @@ use tracing::{info, info_span, instrument, Instrument};
 
 use tracing_showcase::{
     grpc::proto::{cards_service_client::CardsServiceClient, DrawCardsRequest, NewDecksRequest},
-    layers::{inject_jaeger_context, GrpcCheckRequest, RequestCounterLayer},
+    layers::{jaeger_tracing_context_propagator, GrpcCheckRequest, RequestCounterLayer},
     tracing_setup::init_tracing,
 };
 
@@ -30,7 +30,9 @@ async fn run_client() -> anyhow::Result<()> {
     let client = tower::ServiceBuilder::new()
         .layer(
             ServiceBuilder::new()
-                .layer(tonic::service::interceptor(inject_jaeger_context))
+                .layer(tonic::service::interceptor(
+                    jaeger_tracing_context_propagator,
+                ))
                 .layer(RequestCounterLayer::new(GrpcCheckRequest::new())),
         )
         .service(channel);

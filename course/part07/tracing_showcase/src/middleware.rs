@@ -28,7 +28,7 @@ impl reqwest_middleware::Middleware for JaegerContextPropagatorMiddleware {
             static PARENT_CTX_MAP: RefCell<HashMap<String, String, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
         }
 
-        if let Err(err) = PARENT_CTX_MAP.with(|parent_ctx_map| {
+        PARENT_CTX_MAP.with::<_, Result<_, anyhow::Error>>(|parent_ctx_map| {
             let mut parent_ctx_map = parent_ctx_map.borrow_mut();
             parent_ctx_map.clear();
 
@@ -40,21 +40,13 @@ impl reqwest_middleware::Middleware for JaegerContextPropagatorMiddleware {
 
             let hd = req.headers_mut();
             for (k, v) in parent_ctx_map.drain() {
-                let k = match k.parse::<HeaderName>() {
-                    Ok(k) => k,
-                    Err(err) => return Err(anyhow::Error::new(err)),
-                };
-                let v = match v.parse::<HeaderValue>() {
-                    Ok(v) => v,
-                    Err(err) => return Err(anyhow::Error::new(err)),
-                };
+                let k = k.parse::<HeaderName>()?;
+                let v = v.parse::<HeaderValue>()?;
                 hd.insert(k, v);
             }
 
-            Ok::<_, anyhow::Error>(())
-        }) {
-            return Err(reqwest_middleware::Error::Middleware(err));
-        }
+            Ok(())
+        })?;
 
         next.run(req, extensions).await
     }

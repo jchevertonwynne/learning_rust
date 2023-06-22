@@ -3,7 +3,8 @@ use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{
     layer::SubscriberExt,
     util::{SubscriberInitExt, TryInitError},
-    EnvFilter, Registry,
+    EnvFilter,
+    Registry,
 };
 
 pub fn init_tracing(service_name: &str) -> Result<TracingHandle, TracingSetupError> {
