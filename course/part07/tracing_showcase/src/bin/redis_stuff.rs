@@ -14,10 +14,10 @@ use tracing_showcase::{
 async fn main() -> anyhow::Result<()> {
     init_tracing("redis stuff")?;
 
+    info!("hello!");
+
     let span = info_span!("running redis");
     let entered = span.entered();
-
-    info!("hello!");
 
     let r = redis::Client::open("redis://127.0.0.1:6379")?;
     let conn = Arc::new(Mutex::new(
@@ -28,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut service = ServiceBuilder::new()
         .layer(RequestCounterLayer::new(RedisChecker::new(
-            redis::Value::Data("world2".as_bytes().iter().map(|b| *b).collect::<Vec<u8>>()),
+            redis::Value::Data("world2".as_bytes().to_vec()),
         )))
         .service(RedisService { conn });
 
@@ -40,9 +40,9 @@ async fn main() -> anyhow::Result<()> {
     let resp = service.call(redis::Cmd::get("hello")).await?;
     info!(" got resp {resp:?}");
 
-    info!("goodbye from redis!");
-
     entered.exit();
+
+    info!("goodbye from redis!");
 
     opentelemetry::global::shutdown_tracer_provider();
 
@@ -99,11 +99,3 @@ impl Service<redis::Cmd> for RedisService {
         )
     }
 }
-
-#[pin_project::pin_project]
-struct RedisFut {
-    #[pin]
-    fut: Box<dyn Future<Output = redis::Value>>,
-}
-
-// impl F
