@@ -15,7 +15,7 @@ use tracing_showcase::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_tracing("fake deck of cards api")?;
+    let _handle = init_tracing("fake deck of cards api")?;
 
     info!("hello!");
 
@@ -49,8 +49,6 @@ async fn main() -> anyhow::Result<()> {
     server.await?;
 
     info!("goodbye!");
-
-    opentelemetry::global::shutdown_tracer_provider();
 
     Ok(())
 }

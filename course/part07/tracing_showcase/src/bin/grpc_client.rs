@@ -9,15 +9,13 @@ use tracing_showcase::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_tracing("grpc caller")?;
+    let _handle = init_tracing("grpc caller")?;
 
     info!("hello from the client!");
 
     let res = run_client().await;
 
     info!("goodbye from the client!");
-
-    opentelemetry::global::shutdown_tracer_provider();
 
     res
 }

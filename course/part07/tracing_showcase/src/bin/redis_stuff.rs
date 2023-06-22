@@ -12,7 +12,7 @@ use tracing_showcase::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_tracing("redis stuff")?;
+    let _handle = init_tracing("redis stuff")?;
 
     info!("hello!");
 
@@ -43,8 +43,6 @@ async fn main() -> anyhow::Result<()> {
     entered.exit();
 
     info!("goodbye from redis!");
-
-    opentelemetry::global::shutdown_tracer_provider();
 
     Ok(())
 }

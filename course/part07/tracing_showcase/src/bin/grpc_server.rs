@@ -18,7 +18,7 @@ use tracing_showcase::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_tracing("grpc server")?;
+    let _handle = init_tracing("grpc server")?;
 
     info!("starting grpc server...");
 
@@ -55,8 +55,6 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     info!("goodbye!");
-
-    opentelemetry::global::shutdown_tracer_provider();
 
     Ok(())
 }

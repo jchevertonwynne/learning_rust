@@ -3,11 +3,10 @@ use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{
     layer::SubscriberExt,
     util::{SubscriberInitExt, TryInitError},
-    EnvFilter,
-    Registry,
+    EnvFilter, Registry,
 };
 
-pub fn init_tracing(service_name: &str) -> Result<(), TracingSetupError> {
+pub fn init_tracing(service_name: &str) -> Result<TracingHandle, TracingSetupError> {
     opentelemetry::global::set_text_map_propagator(opentelemetry_jaeger::Propagator::new());
 
     Registry::default()
@@ -28,7 +27,16 @@ pub fn init_tracing(service_name: &str) -> Result<(), TracingSetupError> {
         )
         .try_init()?;
 
-    Ok(())
+    Ok(TracingHandle)
+}
+
+#[must_use]
+pub struct TracingHandle;
+
+impl Drop for TracingHandle {
+    fn drop(&mut self) {
+        opentelemetry::global::shutdown_tracer_provider();
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
