@@ -1,4 +1,3 @@
-use mongodb::options::ClientOptions;
 use testing::{
     config::AppConfig,
     deck_of_cards::DeckOfCardsClient,
@@ -14,19 +13,17 @@ use testing::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let AppConfig {
-        mongo,
-        deck_of_cards,
-    } = AppConfig::load()?;
+    let config = AppConfig::load()?;
 
     let reqwest_client = reqwest::ClientBuilder::new().build()?;
 
     let mongo_client =
-        mongodb::Client::with_options(ClientOptions::parse_connection_string(mongo).await?)?;
-    let record_controller = MongoRecordController::new(&mongo_client);
+        mongodb::Client::with_uri_str(config.mongo_config.connection_string.as_str()).await?;
+    let record_controller =
+        MongoRecordController::new(&mongo_client, config.mongo_config.database_info);
 
     let state = CardsServiceState::new(
-        DeckOfCardsClient::new(deck_of_cards, reqwest_client),
+        DeckOfCardsClient::new(config.deck_of_cards, reqwest_client),
         record_controller,
     );
 

@@ -14,18 +14,18 @@ mod tests {
     #[automock]
     #[async_trait]
     trait DoesSomething {
-        fn method(&self, a: usize, b: usize) -> usize;
-        async fn method_async(&self, c: &str, d: &str) -> usize;
+        fn my_method(&self, a: usize, b: usize) -> usize;
+        async fn my_method_async(&self, c: &str, d: &str) -> usize;
     }
 
     fn my_func<D: DoesSomething>(d: &D) -> usize {
-        d.method(2, 3)
+        d.my_method(2, 3)
     }
 
     #[test]
     fn mocked() {
         let mut d = MockDoesSomething::new();
-        d.expect_method()
+        d.expect_my_method()
             .with(predicate::eq(2), predicate::eq(3))
             .returning(|a, b| a + b)
             .once();
@@ -34,13 +34,13 @@ mod tests {
     }
 
     async fn my_func_async<D: DoesSomething>(d: &D) -> usize {
-        d.method_async("hello", "world!").await
+        d.my_method_async("hello", "world!").await
     }
 
     #[tokio::test]
     async fn mocked_async() {
         let mut d = MockDoesSomething::new();
-        d.expect_method_async()
+        d.expect_my_method_async()
             .with(
                 predicate::function(|s: &str| s.len() == 5),
                 predicate::eq("world!"),

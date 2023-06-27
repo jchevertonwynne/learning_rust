@@ -22,4 +22,5 @@ url = { version = "2.4.0", features = ["serde"] }
 
 [dev-dependencies]
 test-case = "3.1.0"
+uuid = "1.4.0"
 wiremock = "0.5.19"

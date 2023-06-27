@@ -2,7 +2,10 @@ use async_trait::async_trait;
 use mongodb::bson::doc;
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Card, DeckID};
+use crate::{
+    config::DatabaseConfig,
+    model::{Card, DeckID},
+};
 
 #[derive(Serialize, Deserialize)]
 pub struct InteractionRecord {
@@ -34,9 +37,9 @@ impl crate::state::Mongo for MongoRecordController {
 }
 
 impl MongoRecordController {
-    pub fn new(client: &mongodb::Client) -> Self {
-        let db = client.database("tracing_showcase");
-        let interactions = db.collection("interactions");
+    pub fn new(client: &mongodb::Client, config: DatabaseConfig) -> Self {
+        let db = client.database(config.database.as_str());
+        let interactions = db.collection(config.collections.interactions.as_str());
         Self { interactions }
     }
 

@@ -1,2 +1,11 @@
-mongo = "mongodb://localhost:27017/?minPoolSize=128"
+mongo = "mongodb://localhost:27017"
 deck_of_cards = "https://deckofcardsapi.com"
+
+[mongo_config]
+connection_string = "mongodb://localhost:27017"
+
+[mongo_config.database_info]
+database = "testing_showcase"
+
+[mongo_config.database_info.collections]
+interactions = "interactions"
