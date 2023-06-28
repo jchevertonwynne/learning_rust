@@ -8,6 +8,13 @@ pub struct DeckOfCardsClient {
     client: reqwest::Client,
 }
 
+impl DeckOfCardsClient {
+    pub fn new(mut base_url: Url, client: reqwest::Client) -> Self {
+        base_url.set_path("/");
+        Self { base_url, client }
+    }
+}
+
 #[async_trait]
 impl crate::state::DeckOfCards for DeckOfCardsClient {
     async fn new_deck(&self, decks: usize) -> Result<DeckInfo, reqwest::Error> {
@@ -27,21 +34,6 @@ impl crate::state::DeckOfCards for DeckOfCardsClient {
     }
 
     async fn draw_cards(&self, deck_id: DeckID, n: u8) -> Result<DrawnCardsInfo, reqwest::Error> {
-        DeckOfCardsClient::draw_cards(self, deck_id, n).await
-    }
-}
-
-impl DeckOfCardsClient {
-    pub fn new(mut base_url: Url, client: reqwest::Client) -> Self {
-        base_url.set_path("/");
-        Self { base_url, client }
-    }
-
-    pub async fn draw_cards(
-        &self,
-        deck_id: DeckID,
-        n: u8,
-    ) -> Result<DrawnCardsInfo, reqwest::Error> {
         let mut url = self.base_url.clone();
         url.set_path(&format!("/api/deck/{deck_id}/draw/"));
         url.set_query(Some(&format!("count={n}")));

@@ -3,7 +3,7 @@ use testing::{
     deck_of_cards::DeckOfCardsClient,
     mongo::MongoRecordController,
     state::{
-        CardsServiceState,
+        DeckService,
         DrawCardsRequest,
         DrawCardsResponse,
         NewDecksRequest,
@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     let record_controller =
         MongoRecordController::new(&mongo_client, config.mongo_config.database_info);
 
-    let state = CardsServiceState::new(
+    let state = DeckService::new(
         DeckOfCardsClient::new(config.deck_of_cards, reqwest_client),
         record_controller,
     );

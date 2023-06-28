@@ -1,11 +1,10 @@
+use std::{future::Future, sync::Arc};
+
 use mockall::predicate::eq;
 use mongodb::{
     bson::uuid,
     options::{DropDatabaseOptions, WriteConcern},
-    Client,
 };
-use std::{future::Future, sync::Arc};
-
 use reqwest::StatusCode;
 use url::Url;
 use wiremock::{matchers, ResponseTemplate};
@@ -15,28 +14,31 @@ use testing::{
     deck_of_cards::DeckOfCardsClient,
     model::{DeckID, DeckInfo},
     mongo::MongoRecordController,
-    state::{CardsServiceState, MockMongo, NewDecksRequest, NewDecksResponse},
+    state::{DeckService, MockMongo, NewDecksRequest, NewDecksResponse},
 };
 
-static ONCE: tokio::sync::OnceCell<Arc<Client>> = tokio::sync::OnceCell::const_new();
+static ONCE: tokio::sync::OnceCell<(Arc<mongodb::Client>, AppConfig)> = tokio::sync::OnceCell::const_new();
 
-async fn setup() -> (Arc<Client>, AppConfig, impl Future<Output = ()>) {
-    let mut config = AppConfig::load_from_dir("../../../config.toml").unwrap();
+async fn setup() -> (Arc<mongodb::Client>, AppConfig, impl Future<Output = ()>) {
+    let (mongo, mut config) = ONCE
+        .get_or_init(|| async {
+            let config =
+                AppConfig::load_from_dir("../../../config.toml").expect("failed to load config");
+
+            let mongo_client = mongodb::Client::with_uri_str(config.mongo_config.connection_string.as_str())
+                .await
+                .expect("failed to parse connection string");
+
+            (Arc::new(mongo_client), config)
+        })
+        .await
+        .clone();
+
     config.mongo_config.database_info.database = format!(
         "{}-test-{}",
         config.mongo_config.database_info.database,
         uuid::Uuid::new()
     );
-
-    let mongo = ONCE
-        .get_or_init(|| async {
-            let mongo_client = Client::with_uri_str(config.mongo_config.connection_string.as_str())
-                .await
-                .expect("failed to parse connection string");
-            Arc::new(mongo_client)
-        })
-        .await
-        .clone();
 
     let cleanup = {
         let database = config.mongo_config.database_info.database.clone();
@@ -78,7 +80,7 @@ async fn new_decks_success() -> anyhow::Result<()> {
             .mount(&mock_deck_server)
             .await;
 
-        let state = CardsServiceState::new(
+        let state = DeckService::new(
             DeckOfCardsClient::new(
                 Url::try_from(mock_deck_server.uri().as_str())?,
                 reqwest::ClientBuilder::new().build()?,
@@ -129,7 +131,7 @@ async fn new_decks_mongo_failure() -> anyhow::Result<()> {
         .returning(|_| Err(mongodb::error::Error::custom("failed lol")))
         .once();
 
-    let state = CardsServiceState::new(
+    let state = DeckService::new(
         DeckOfCardsClient::new(
             Url::try_from(mock_deck_server.uri().as_str())?,
             reqwest::ClientBuilder::new().build()?,

@@ -25,25 +25,17 @@ pub struct MongoRecordController {
     interactions: mongodb::Collection<InteractionRecord>,
 }
 
-#[async_trait]
-impl crate::state::Mongo for MongoRecordController {
-    async fn create(&self, deck_id: DeckID) -> Result<(), mongodb::error::Error> {
-        MongoRecordController::create(self, deck_id).await
-    }
-
-    async fn increment_count(&self, deck_id: DeckID) -> Result<(), mongodb::error::Error> {
-        MongoRecordController::increment_count(self, deck_id).await
-    }
-}
-
 impl MongoRecordController {
     pub fn new(client: &mongodb::Client, config: DatabaseConfig) -> Self {
         let db = client.database(config.database.as_str());
         let interactions = db.collection(config.collections.interactions.as_str());
         Self { interactions }
     }
+}
 
-    pub async fn create(&self, deck_id: DeckID) -> Result<(), mongodb::error::Error> {
+#[async_trait]
+impl crate::state::Mongo for MongoRecordController {
+    async fn create(&self, deck_id: DeckID) -> Result<(), mongodb::error::Error> {
         self.interactions
             .insert_one(InteractionRecord { deck_id, count: 0 }, None)
             .await?;
@@ -51,7 +43,7 @@ impl MongoRecordController {
         Ok(())
     }
 
-    pub async fn increment_count(&self, deck_id: DeckID) -> Result<(), mongodb::error::Error> {
+    async fn increment_count(&self, deck_id: DeckID) -> Result<(), mongodb::error::Error> {
         self.interactions
             .update_one(
                 doc! { "deck_id": deck_id },
@@ -64,10 +56,3 @@ impl MongoRecordController {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum RemoveCardsError {
-    #[error("Failed to find document")]
-    InvalidDocument,
-    #[error("mongo operation failed: {0}")]
-    Mongo(#[from] mongodb::error::Error),
-}

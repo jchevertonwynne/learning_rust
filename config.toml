@@ -1,4 +1,3 @@
-mongo = "mongodb://localhost:27017"
 deck_of_cards = "https://deckofcardsapi.com"
 
 [mongo_config]
