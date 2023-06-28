@@ -4,17 +4,23 @@ use mockall::automock;
 
 use crate::model::{DeckID, DeckInfo, DrawnCardsInfo};
 
+/// Trait describing the operations used on the deck of cards API
 #[automock]
 #[async_trait]
 pub trait DeckOfCards {
+    // Creates a deck consisting of multiple regular 52 card decks shuffled
     async fn new_deck(&self, decks: usize) -> Result<DeckInfo, reqwest::Error>;
+    // Attempts to draw n cards from a given deck
     async fn draw_cards(&self, deck_id: DeckID, n: u8) -> Result<DrawnCardsInfo, reqwest::Error>;
 }
 
+// A trait descibiing the bookkeeping operations tracking usage of a deck ID
 #[automock]
 #[async_trait]
 pub trait Mongo {
+    // Creates a new record
     async fn create(&self, deck_id: DeckID) -> Result<(), mongodb::error::Error>;
+    // Updates the operation count for a record
     async fn increment_count(&self, deck_id: DeckID) -> Result<(), mongodb::error::Error>;
 }
 

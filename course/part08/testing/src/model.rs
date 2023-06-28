@@ -4,10 +4,12 @@ use mongodb::bson::doc;
 use rand::seq::SliceRandom;
 use url::Url;
 
+/// ID returned by the deck of cards API, consisting of 12 lowercase ascii letters or digits
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct DeckID([u8; 12]);
 
 impl DeckID {
+    /// Generates a random deck ID
     pub fn random() -> Self {
         let chars = b"0123456789qwertyuiopasdfghjklzxcvbnm";
         DeckID(std::array::from_fn(|_| {
@@ -22,6 +24,14 @@ impl DeckID {
 #[error("deck ID must be 12 lowercase letters or numbers")]
 pub struct DeckIDParseError;
 
+/// Generates a DeckID from a valid string
+/// ```
+/// # use crate::testing::model::DeckID;
+/// let valid = "aabbccddeeff";
+/// assert!(DeckID::try_from(valid).is_ok());
+/// let invalid = "Aabbccddeeff"; // cannot contain uppercase chars
+/// assert!(DeckID::try_from(invalid).is_err());
+/// ```
 impl<'a> TryFrom<&'a str> for DeckID {
     type Error = DeckIDParseError;
 
@@ -33,7 +43,7 @@ impl<'a> TryFrom<&'a str> for DeckID {
         if !value.is_ascii()
             || !value
                 .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_alphanumeric())
+                .all(|c| c.is_ascii_lowercase() || c.is_numeric())
         {
             return Err(DeckIDParseError);
         }

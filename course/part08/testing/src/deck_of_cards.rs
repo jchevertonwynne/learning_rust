@@ -3,6 +3,40 @@ use url::Url;
 
 use crate::model::{DeckID, DeckInfo, DrawnCardsInfo};
 
+/// Client for calling the deck of cards API
+/// ```
+/// # use crate::testing::state::DeckOfCards;
+/// # use testing::deck_of_cards::DeckOfCardsClient;
+/// # use testing::model::DeckID;
+/// # use testing::model::DeckInfo;
+/// # use wiremock::{matchers, Mock, MockServer};
+/// # use wiremock::ResponseTemplate;
+/// # use reqwest::{ClientBuilder, StatusCode};
+/// # use url::Url;
+/// # tokio_test::block_on(async {
+/// let mock_server = MockServer::start().await;
+/// let deck_info = DeckInfo {
+///     success: true,
+///     deck_id: DeckID::random(),
+///     shuffled: true,
+///     remaining: 52,
+/// };
+/// Mock::given(matchers::method("GET"))
+///     .and(matchers::path("/api/deck/new/shuffle/"))
+///     .and(matchers::query_param("deck_count", "2"))
+///     .respond_with(
+///         ResponseTemplate::new(StatusCode::OK)
+///             .set_body_json(deck_info.clone())
+///     )
+///     .mount(&mock_server)
+///     .await;
+/// # let deck_of_cards_url = url::Url::try_from(mock_server.uri().as_str()).unwrap();
+/// # let client = ClientBuilder::new().build().unwrap();
+/// let client = DeckOfCardsClient::new(deck_of_cards_url, client);
+/// let response = client.new_deck(2).await.unwrap();
+/// assert_eq!(deck_info, response);
+/// # })
+/// ```
 pub struct DeckOfCardsClient {
     base_url: Url,
     client: reqwest::Client,
