@@ -22,6 +22,7 @@ url = { version = "2.4.0", features = ["serde"] }
 
 [dev-dependencies]
 test-case = "3.1.0"
+testing_cleanup = { path = "../testing_cleanup" }
 tokio-test = "0.4.2"
 uuid = "1.4.0"
 wiremock = "0.5.19"

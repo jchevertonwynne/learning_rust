@@ -2,13 +2,7 @@ use testing::{
     config::AppConfig,
     deck_of_cards::DeckOfCardsClient,
     mongo::MongoRecordController,
-    state::{
-        DeckService,
-        DrawCardsRequest,
-        DrawCardsResponse,
-        NewDecksRequest,
-        NewDecksResponse,
-    },
+    state::{DeckService, DrawCardsRequest, DrawCardsResponse, NewDecksRequest, NewDecksResponse},
 };
 
 #[tokio::main]
