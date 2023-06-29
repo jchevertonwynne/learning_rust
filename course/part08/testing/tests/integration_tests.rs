@@ -100,7 +100,7 @@ async fn new_decks_success_manual_cleanup() -> anyhow::Result<()> {
 }
 
 #[test_with_cleanup]
-async fn my_test_automatic_cleanup(
+async fn new_decks_success_automatic_cleanup(
     mongo: mongodb::Client,
     config: testing::config::AppConfig,
 ) -> anyhow::Result<()> {
