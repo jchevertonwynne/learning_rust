@@ -17,15 +17,13 @@ pub fn test_with_cleanup(_args: TokenStream, items: TokenStream) -> TokenStream 
     quote!(
         #[::tokio::test]
         async fn #ident() -> anyhow::Result<()> {
-            let (mongo, config, cleanup) = crate::common::setup().await;
-
+            let (mongo, config, cleanup) = crate::common::setup().await?;
 
             #my_fn
 
-
             let res = ::tokio::spawn(test_inner_fn(mongo, config)).await;
 
-            cleanup.await;
+            cleanup.await?;
 
             res??;
 

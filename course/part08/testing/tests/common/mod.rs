@@ -1,12 +1,13 @@
 use std::future::Future;
+use anyhow::{Context};
 
 use mongodb::options::{DropDatabaseOptions, WriteConcern};
 use testing::config::AppConfig;
 
-pub async fn setup() -> (mongodb::Client, AppConfig, impl Future<Output = ()>) {
+pub async fn setup() -> anyhow::Result<(mongodb::Client, AppConfig, impl Future<Output = anyhow::Result<()>>)> {
     let config = {
         let mut config =
-            AppConfig::load_from_dir("../../../config.toml").expect("failed to load config");
+            AppConfig::load_from_dir("../../../config.toml").context("failed to load config")?;
 
         config.mongo_config.database_info.database = format!(
             "{}-test-{}",
@@ -19,7 +20,7 @@ pub async fn setup() -> (mongodb::Client, AppConfig, impl Future<Output = ()>) {
 
     let mongo = mongodb::Client::with_uri_str(config.mongo_config.connection_string.as_str())
         .await
-        .expect("failed to create mongo client");
+        .context("failed to create mongo client")?;
 
     let cleanup = {
         let database = config.mongo_config.database_info.database.clone();
@@ -33,9 +34,11 @@ pub async fn setup() -> (mongodb::Client, AppConfig, impl Future<Output = ()>) {
                         .build(),
                 )
                 .await
-                .unwrap_or_else(|err| panic!("failed to delete database {database:?}: {err}"));
+                .map_err(|err| anyhow::anyhow!("failed to delete database {database:?}: {err}"))?;
+
+            Ok(())
         }
     };
 
-    (mongo, config, cleanup)
+    Ok((mongo, config, cleanup))
 }
