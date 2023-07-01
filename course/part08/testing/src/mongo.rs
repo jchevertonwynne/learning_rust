@@ -55,4 +55,3 @@ impl crate::state::Mongo for MongoRecordController {
         Ok(())
     }
 }
-

@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -11,13 +12,16 @@ use std::{
 };
 
 use fxhash::FxBuildHasher;
-use pin_project::pin_project;
-use tonic::{
-    codegen::Service,
-    metadata::{Ascii, MetadataKey, MetadataValue},
+use http::{
+    header::{InvalidHeaderName, InvalidHeaderValue},
+    HeaderMap,
+    HeaderName,
+    HeaderValue,
 };
+use pin_project::pin_project;
+use tonic::{codegen::Service, metadata::MetadataMap};
 use tower::Layer;
-use tracing::{info, info_span, instrument::Instrumented, Instrument};
+use tracing::{error, info, info_span, instrument::Instrumented, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 pub trait SuccessChecker: Clone {
@@ -247,12 +251,12 @@ pub struct JaegerPropagatedTracingContextConsumerService<S> {
 
 impl<S, I, O> Service<http::Request<I>> for JaegerPropagatedTracingContextConsumerService<S>
 where
-    S: Service<http::Request<I>, Response = http::Response<O>>,
+    S: Service<http::Request<I>, Response = O>,
     O: Default,
 {
     type Response = S::Response;
     type Error = S::Error;
-    type Future = StatusOrFuture<Instrumented<S::Future>>;
+    type Future = Instrumented<S::Future>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
@@ -275,9 +279,8 @@ where
                     let v = match v.to_str() {
                         Ok(v) => v,
                         Err(err) => {
-                            return StatusOrFuture::Status(tonic::Status::internal(format!(
-                                "failed to convert ascii string to str: {err}"
-                            )))
+                            error!("failed to convert ascii string to str: {err}");
+                            continue;
                         }
                     }
                     .to_string();
@@ -292,45 +295,25 @@ where
             });
 
             span.set_parent(parent_ctx);
-            StatusOrFuture::Fut(Instrument::instrument(self.inner.call(req), span))
+            Instrument::instrument(self.inner.call(req), span)
         })
     }
 }
 
-#[pin_project(project = StatusOrFutureProj)]
-pub enum StatusOrFuture<F> {
-    Status(tonic::Status),
-    Fut(#[pin] F),
+#[derive(Debug, thiserror::Error)]
+enum InvalidHeaderError {
+    #[error(transparent)]
+    Name(#[from] InvalidHeaderName),
+    #[error(transparent)]
+    Value(#[from] InvalidHeaderValue),
 }
 
-impl<F, ResBody, E> Future for StatusOrFuture<F>
-where
-    F: Future<Output = Result<http::Response<ResBody>, E>>,
-    ResBody: Default,
-{
-    type Output = F::Output;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.project() {
-            StatusOrFutureProj::Status(s) => {
-                // replace status with cheap to make dummy value
-                let s = std::mem::replace(s, tonic::Status::internal(""));
-                let (p, _) = s.to_http().into_parts();
-                Poll::Ready(Ok(http::Response::from_parts(p, ResBody::default())))
-            }
-            StatusOrFutureProj::Fut(f) => f.poll(cx),
-        }
-    }
-}
-
-pub fn jaeger_tracing_context_propagator(
-    mut req: tonic::Request<()>,
-) -> Result<tonic::Request<()>, tonic::Status> {
+fn inject_tracing_context(hd: &mut HeaderMap) -> Result<(), InvalidHeaderError> {
     std::thread_local! {
         static PARENT_CTX_MAP: RefCell<HashMap<String, String, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
     }
 
-    PARENT_CTX_MAP.with::<_, Result<(), tonic::Status>>(|parent_ctx_map| {
+    PARENT_CTX_MAP.with::<_, Result<(), InvalidHeaderError>>(|parent_ctx_map| {
         let mut parent_ctx_map = parent_ctx_map.borrow_mut();
         parent_ctx_map.clear();
 
@@ -340,19 +323,45 @@ pub fn jaeger_tracing_context_propagator(
             propagator.inject_context(&ctx, parent_ctx_map.deref_mut());
         });
 
-        let md = req.metadata_mut();
         for (k, v) in parent_ctx_map.drain() {
-            let k = k
-                .parse::<MetadataKey<Ascii>>()
-                .map_err(|err| tonic::Status::internal(err.to_string()))?;
-            let v = v
-                .parse::<MetadataValue<Ascii>>()
-                .map_err(|err| tonic::Status::internal(err.to_string()))?;
-            md.insert(k, v);
+            let k = k.parse::<HeaderName>()?;
+            let v = v.parse::<HeaderValue>()?;
+            hd.insert(k, v);
         }
 
         Ok(())
-    })?;
+    })
+}
+
+pub fn jaeger_tracing_context_propagator(
+    mut req: tonic::Request<()>,
+) -> Result<tonic::Request<()>, tonic::Status> {
+    let mut hd = std::mem::take(req.metadata_mut()).into_headers();
+    inject_tracing_context(&mut hd).map_err(|err| tonic::Status::internal(err.to_string()))?;
+    *req.metadata_mut() = MetadataMap::from_headers(hd);
 
     Ok(req)
+}
+
+#[derive(Debug, Default)]
+pub struct JaegerContextPropagatorMiddleware {}
+
+impl JaegerContextPropagatorMiddleware {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+#[async_trait]
+impl reqwest_middleware::Middleware for JaegerContextPropagatorMiddleware {
+    async fn handle(
+        &self,
+        mut req: reqwest::Request,
+        extensions: &'_ mut task_local_extensions::Extensions,
+        next: reqwest_middleware::Next<'_>,
+    ) -> reqwest_middleware::Result<reqwest::Response> {
+        inject_tracing_context(req.headers_mut())
+            .map_err(|err| anyhow::anyhow!("failed to parse headers: {err}"))?;
+        next.run(req, extensions).await
+    }
 }

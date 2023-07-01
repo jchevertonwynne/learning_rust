@@ -1,4 +1,4 @@
-use config::{ConfigError, Config};
+use config::{Config, ConfigError};
 use serde::Deserialize;
 use url::Url;
 

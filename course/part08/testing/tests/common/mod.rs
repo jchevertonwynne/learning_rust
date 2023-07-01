@@ -1,10 +1,14 @@
+use anyhow::Context;
 use std::future::Future;
-use anyhow::{Context};
 
 use mongodb::options::{DropDatabaseOptions, WriteConcern};
 use testing::config::AppConfig;
 
-pub async fn setup() -> anyhow::Result<(mongodb::Client, AppConfig, impl Future<Output = anyhow::Result<()>>)> {
+pub async fn setup() -> anyhow::Result<(
+    mongodb::Client,
+    AppConfig,
+    impl Future<Output = anyhow::Result<()>>,
+)> {
     let config = {
         let mut config =
             AppConfig::load_from_dir("../../../config.toml").context("failed to load config")?;

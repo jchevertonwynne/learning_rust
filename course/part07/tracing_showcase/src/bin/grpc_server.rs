@@ -10,8 +10,12 @@ use url::Url;
 use tracing_showcase::{
     deck_of_cards::DeckOfCardsClient,
     grpc::{proto::cards_service_server::CardsServiceServer, CardsService},
-    layers::{GrpcCheckRequest, JaegerPropagatedTracingContextConsumerLayer, RequestCounterLayer},
-    middleware::JaegerContextPropagatorMiddleware,
+    layers::{
+        GrpcCheckRequest,
+        JaegerContextPropagatorMiddleware,
+        JaegerPropagatedTracingContextConsumerLayer,
+        RequestCounterLayer,
+    },
     mongo::MongoRecordController,
     tracing_setup::init_tracing,
 };
