@@ -13,50 +13,20 @@ use testing::{
 };
 use testing_cleanup::test_with_cleanup;
 
-#[tokio::test]
-async fn new_decks_success_flawed_cleanup() -> anyhow::Result<()> {
-    let (mongo, config, cleanup) = common::setup().await?;
+static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
 
-    let deck_id = DeckID::random();
-    let deck_info = DeckInfo {
-        success: true,
-        deck_id,
-        shuffled: true,
-        remaining: 52,
-    };
+#[test]
+fn new_decks_success_flawed_cleanup() -> anyhow::Result<()> {
+    let rt = RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build runtime")
+    });
 
-    let mock_deck_server = wiremock::MockServer::start().await;
-    wiremock::Mock::given(matchers::method("GET"))
-        .and(matchers::path("/api/deck/new/shuffle/"))
-        .and(matchers::query_param("deck_count", "1"))
-        .respond_with(ResponseTemplate::new(StatusCode::OK).set_body_json(deck_info))
-        .mount(&mock_deck_server)
-        .await;
+    rt.block_on(async {
+        let (mongo, config, cleanup) = common::setup().await?;
 
-    let state = DeckService::new(
-        DeckOfCardsClient::new(
-            Url::try_from(mock_deck_server.uri().as_str())?,
-            reqwest::ClientBuilder::new().build()?,
-        ),
-        MongoRecordController::new(&mongo, config.mongo_config.database_info),
-    );
-
-    assert_eq!(
-        NewDecksResponse { deck_id },
-        state.new_deck(NewDecksRequest { decks: 1 }).await?,
-        "expected a response with the predetermined deck ID"
-    );
-
-    cleanup.await?;
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn new_decks_success_manual_cleanup() -> anyhow::Result<()> {
-    let (mongo, config, cleanup) = common::setup().await?;
-
-    let handle = tokio::spawn(async move {
         let deck_id = DeckID::random();
         let deck_info = DeckInfo {
             success: true,
@@ -87,14 +57,67 @@ async fn new_decks_success_manual_cleanup() -> anyhow::Result<()> {
             "expected a response with the predetermined deck ID"
         );
 
+        cleanup.await?;
+
         Ok::<(), anyhow::Error>(())
+    })?;
+
+    Ok(())
+}
+
+#[test]
+fn new_decks_success_manual_cleanup() -> anyhow::Result<()> {
+    let rt = RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build runtime")
     });
 
-    let res = handle.await;
+    rt.block_on(async {
+        let (mongo, config, cleanup) = common::setup().await?;
+        let handle = tokio::spawn(async move {
+            let deck_id = DeckID::random();
+            let deck_info = DeckInfo {
+                success: true,
+                deck_id,
+                shuffled: true,
+                remaining: 52,
+            };
 
-    cleanup.await?;
+            let mock_deck_server = wiremock::MockServer::start().await;
+            wiremock::Mock::given(matchers::method("GET"))
+                .and(matchers::path("/api/deck/new/shuffle/"))
+                .and(matchers::query_param("deck_count", "1"))
+                .respond_with(ResponseTemplate::new(StatusCode::OK).set_body_json(deck_info))
+                .mount(&mock_deck_server)
+                .await;
 
-    res??;
+            let state = DeckService::new(
+                DeckOfCardsClient::new(
+                    Url::try_from(mock_deck_server.uri().as_str())?,
+                    reqwest::ClientBuilder::new().build()?,
+                ),
+                MongoRecordController::new(&mongo, config.mongo_config.database_info),
+            );
+
+            assert_eq!(
+                NewDecksResponse { deck_id },
+                state.new_deck(NewDecksRequest { decks: 1 }).await?,
+                "expected a response with the predetermined deck ID"
+            );
+
+            Ok::<(), anyhow::Error>(())
+        });
+
+        let res = handle.await;
+
+        cleanup.await?;
+
+        res??;
+
+        Ok::<(), anyhow::Error>(())
+    })?;
 
     Ok(())
 }

@@ -15,17 +15,23 @@ pub fn test_with_cleanup(_args: TokenStream, items: TokenStream) -> TokenStream 
     let ident = std::mem::replace(&mut my_fn.sig.ident, new_ident);
 
     quote!(
-        #[::tokio::test]
-        async fn #ident() -> anyhow::Result<()> {
-            let (mongo, config, cleanup) = crate::common::setup().await?;
+        #[test]
+        fn #ident() -> anyhow::Result<()> {
+            let rt = RT.get_or_init(|| tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("failed to build runtime"));
 
-            #my_fn
+            rt.block_on(async {
+                let (mongo, config, cleanup) = common::setup().await?;
 
-            let res = ::tokio::spawn(test_inner_fn(mongo, config)).await;
+                #my_fn
 
-            cleanup.await?;
+                let res = ::tokio::spawn(test_inner_fn(mongo, config)).await;
 
-            res??;
+                cleanup.await?;
+
+                res??;
+
+                ::core::result::Result::<(), ::anyhow::Error>::Ok(())
+            })?;
 
             ::core::result::Result::Ok(())
         }

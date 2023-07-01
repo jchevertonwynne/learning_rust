@@ -1,30 +1,35 @@
-use anyhow::Context;
-use std::future::Future;
-
 use mongodb::options::{DropDatabaseOptions, WriteConcern};
+use std::future::Future;
 use testing::config::AppConfig;
+
+static SETUP_ONCE: tokio::sync::OnceCell<(AppConfig, mongodb::Client)> =
+    tokio::sync::OnceCell::const_new();
 
 pub async fn setup() -> anyhow::Result<(
     mongodb::Client,
     AppConfig,
     impl Future<Output = anyhow::Result<()>>,
 )> {
-    let config = {
-        let mut config =
-            AppConfig::load_from_dir("../../../config.toml").context("failed to load config")?;
+    let (mut config, mongo) = SETUP_ONCE
+        .get_or_init(|| async {
+            let config =
+                AppConfig::load_from_dir("../../../config.toml").expect("failed to load config");
 
-        config.mongo_config.database_info.database = format!(
-            "{}-test-{}",
-            config.mongo_config.database_info.database,
-            uuid::Uuid::new_v4()
-        );
+            let mongo =
+                mongodb::Client::with_uri_str(config.mongo_config.connection_string.as_str())
+                    .await
+                    .expect("failed to create mongo client");
 
-        config
-    };
-
-    let mongo = mongodb::Client::with_uri_str(config.mongo_config.connection_string.as_str())
+            (config, mongo)
+        })
         .await
-        .context("failed to create mongo client")?;
+        .clone();
+
+    config.mongo_config.database_info.database = format!(
+        "{}-test-{}",
+        config.mongo_config.database_info.database,
+        uuid::Uuid::new_v4()
+    );
 
     let cleanup = {
         let database = config.mongo_config.database_info.database.clone();

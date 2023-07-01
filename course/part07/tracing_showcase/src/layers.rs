@@ -339,7 +339,6 @@ pub fn jaeger_tracing_context_propagator(
     let mut hd = std::mem::take(req.metadata_mut()).into_headers();
     inject_tracing_context(&mut hd).map_err(|err| tonic::Status::internal(err.to_string()))?;
     *req.metadata_mut() = MetadataMap::from_headers(hd);
-
     Ok(req)
 }
 
