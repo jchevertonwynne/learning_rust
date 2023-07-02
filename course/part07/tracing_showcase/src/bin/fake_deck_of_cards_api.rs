@@ -8,7 +8,10 @@ use tracing::info;
 use tracing_showcase::{
     endpoints,
     fake_deck_of_cards_api_state::FakeDeckOfCardsAPIState,
-    layers::{HttpChecker, JaegerPropagatedTracingContextConsumerLayer, RequestCounterLayer},
+    layers::{
+        jaeger_context_propagation::JaegerPropagatedTracingContextConsumerLayer,
+        request_counter::{HttpChecker, RequestCounterLayer},
+    },
     tracing_setup::init_tracing,
 };
 

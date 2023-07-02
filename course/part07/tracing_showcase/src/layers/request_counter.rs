@@ -1,28 +1,14 @@
-use async_trait::async_trait;
 use std::{
-    cell::RefCell,
-    collections::HashMap,
-    fmt::Debug,
     future::Future,
     marker::PhantomData,
-    ops::{Deref, DerefMut},
     pin::Pin,
     sync::{Arc, Mutex},
     task::{ready, Context, Poll},
 };
 
-use fxhash::FxBuildHasher;
-use http::{
-    header::{InvalidHeaderName, InvalidHeaderValue},
-    HeaderMap,
-    HeaderName,
-    HeaderValue,
-};
 use pin_project::pin_project;
-use tonic::{codegen::Service, metadata::MetadataMap};
-use tower::Layer;
-use tracing::{error, info, info_span, instrument::Instrumented, Instrument};
-use tracing_opentelemetry::OpenTelemetrySpanExt;
+use tower::{Layer, Service};
+use tracing::info;
 
 pub trait SuccessChecker: Clone {
     type Request;
@@ -224,143 +210,5 @@ where
             }
             RequestCounterFutProj::Other(f) => f.poll(cx),
         }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct JaegerPropagatedTracingContextConsumerLayer {}
-
-impl JaegerPropagatedTracingContextConsumerLayer {
-    pub fn new() -> Self {
-        JaegerPropagatedTracingContextConsumerLayer::default()
-    }
-}
-
-impl<S> Layer<S> for JaegerPropagatedTracingContextConsumerLayer {
-    type Service = JaegerPropagatedTracingContextConsumerService<S>;
-
-    fn layer(&self, inner: S) -> Self::Service {
-        JaegerPropagatedTracingContextConsumerService { inner }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct JaegerPropagatedTracingContextConsumerService<S> {
-    inner: S,
-}
-
-impl<S, I, O> Service<http::Request<I>> for JaegerPropagatedTracingContextConsumerService<S>
-where
-    S: Service<http::Request<I>, Response = O>,
-    O: Default,
-{
-    type Response = S::Response;
-    type Error = S::Error;
-    type Future = Instrumented<S::Future>;
-
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx)
-    }
-
-    fn call(&mut self, req: http::Request<I>) -> Self::Future {
-        std::thread_local! {
-            static PARENT_CTX_MAP: RefCell<HashMap<String, String, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
-        }
-
-        PARENT_CTX_MAP.with(|parent_ctx_map| {
-            let mut parent_ctx_map = parent_ctx_map.borrow_mut();
-            parent_ctx_map.clear();
-
-            // let mut parent_ctx_map = HashMap::<String, String>::new();
-            for (k, v) in req.headers() {
-                let k = k.as_str();
-                if k == "uber-trace-id" || k.starts_with("uberctx-") {
-                    let k = k.to_string();
-                    let v = match v.to_str() {
-                        Ok(v) => v,
-                        Err(err) => {
-                            error!("failed to convert ascii string to str: {err}");
-                            continue;
-                        }
-                    }
-                    .to_string();
-                    parent_ctx_map.insert(k, v);
-                }
-            }
-
-            let span = info_span!("handling a request", uri = %req.uri());
-
-            let parent_ctx = opentelemetry::global::get_text_map_propagator(|propagator| {
-                propagator.extract(parent_ctx_map.deref())
-            });
-
-            span.set_parent(parent_ctx);
-            Instrument::instrument(self.inner.call(req), span)
-        })
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-enum InvalidHeaderError {
-    #[error(transparent)]
-    Name(#[from] InvalidHeaderName),
-    #[error(transparent)]
-    Value(#[from] InvalidHeaderValue),
-}
-
-fn inject_tracing_context(hd: &mut HeaderMap) -> Result<(), InvalidHeaderError> {
-    std::thread_local! {
-        static PARENT_CTX_MAP: RefCell<HashMap<String, String, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
-    }
-
-    PARENT_CTX_MAP.with::<_, Result<(), InvalidHeaderError>>(|parent_ctx_map| {
-        let mut parent_ctx_map = parent_ctx_map.borrow_mut();
-        parent_ctx_map.clear();
-
-        let ctx = tracing::Span::current().context();
-
-        opentelemetry::global::get_text_map_propagator(|propagator| {
-            propagator.inject_context(&ctx, parent_ctx_map.deref_mut());
-        });
-
-        for (k, v) in parent_ctx_map.drain() {
-            let k = k.parse::<HeaderName>()?;
-            let v = v.parse::<HeaderValue>()?;
-            hd.insert(k, v);
-        }
-
-        Ok(())
-    })
-}
-
-pub fn jaeger_tracing_context_propagator(
-    mut req: tonic::Request<()>,
-) -> Result<tonic::Request<()>, tonic::Status> {
-    let mut hd = std::mem::take(req.metadata_mut()).into_headers();
-    inject_tracing_context(&mut hd).map_err(|err| tonic::Status::internal(err.to_string()))?;
-    *req.metadata_mut() = MetadataMap::from_headers(hd);
-    Ok(req)
-}
-
-#[derive(Debug, Default)]
-pub struct JaegerContextPropagatorMiddleware {}
-
-impl JaegerContextPropagatorMiddleware {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-#[async_trait]
-impl reqwest_middleware::Middleware for JaegerContextPropagatorMiddleware {
-    async fn handle(
-        &self,
-        mut req: reqwest::Request,
-        extensions: &'_ mut task_local_extensions::Extensions,
-        next: reqwest_middleware::Next<'_>,
-    ) -> reqwest_middleware::Result<reqwest::Response> {
-        inject_tracing_context(req.headers_mut())
-            .map_err(|err| anyhow::anyhow!("failed to parse headers: {err}"))?;
-        next.run(req, extensions).await
     }
 }

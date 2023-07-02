@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use tower::{Service, ServiceBuilder};
 use tracing::{info, info_span, Instrument};
 use tracing_showcase::{
-    layers::{RequestCounterLayer, SuccessChecker},
+    layers::request_counter::{RequestCounterLayer, SuccessChecker},
     tracing_setup::init_tracing,
 };
 

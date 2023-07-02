@@ -3,7 +3,10 @@ use tracing::{info, info_span, instrument, Instrument};
 
 use tracing_showcase::{
     grpc::proto::{cards_service_client::CardsServiceClient, DrawCardsRequest, NewDecksRequest},
-    layers::{jaeger_tracing_context_propagator, GrpcCheckRequest, RequestCounterLayer},
+    layers::{
+        jaeger_context_propagation::jaeger_tracing_context_propagator,
+        request_counter::{GrpcCheckRequest, RequestCounterLayer},
+    },
     tracing_setup::init_tracing,
 };
 

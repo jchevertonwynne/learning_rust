@@ -11,10 +11,11 @@ use tracing_showcase::{
     deck_of_cards::DeckOfCardsClient,
     grpc::{proto::cards_service_server::CardsServiceServer, CardsService},
     layers::{
-        GrpcCheckRequest,
-        JaegerContextPropagatorMiddleware,
-        JaegerPropagatedTracingContextConsumerLayer,
-        RequestCounterLayer,
+        jaeger_context_propagation::{
+            JaegerContextPropagatorMiddleware,
+            JaegerPropagatedTracingContextConsumerLayer,
+        },
+        request_counter::{GrpcCheckRequest, RequestCounterLayer},
     },
     mongo::MongoRecordController,
     tracing_setup::init_tracing,
