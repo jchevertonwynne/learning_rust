@@ -13,16 +13,9 @@ use testing::{
 };
 use testing_cleanup::test_with_cleanup;
 
-static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
-
 #[test]
 fn new_decks_success_flawed_cleanup() -> anyhow::Result<()> {
-    let rt = RT.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("failed to build runtime")
-    });
+    let rt = common::rt();
 
     rt.block_on(async {
         let (mongo, config, cleanup) = common::setup().await?;
@@ -67,15 +60,11 @@ fn new_decks_success_flawed_cleanup() -> anyhow::Result<()> {
 
 #[test]
 fn new_decks_success_manual_cleanup() -> anyhow::Result<()> {
-    let rt = RT.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("failed to build runtime")
-    });
+    let rt = common::rt();
 
     rt.block_on(async {
         let (mongo, config, cleanup) = common::setup().await?;
+
         let handle = tokio::spawn(async move {
             let deck_id = DeckID::random();
             let deck_info = DeckInfo {

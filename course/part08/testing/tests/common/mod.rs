@@ -2,8 +2,19 @@ use mongodb::options::{DropDatabaseOptions, WriteConcern};
 use std::future::Future;
 use testing::config::AppConfig;
 
+static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+
 static SETUP_ONCE: tokio::sync::OnceCell<(AppConfig, mongodb::Client)> =
     tokio::sync::OnceCell::const_new();
+
+pub fn rt() -> &'static tokio::runtime::Runtime {
+    RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build runtime")
+    })
+}
 
 pub async fn setup() -> anyhow::Result<(
     mongodb::Client,

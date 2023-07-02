@@ -3,7 +3,7 @@ use proc_macro2::Ident;
 use quote::quote;
 use syn::ItemFn;
 
-/// Generates code that takes an `async fn(std::sync::Arc<mongodb::Client>, testing::config::AppConfig)`,
+/// Generates code that takes an `async fn(mongodb::Client, testing::config::AppConfig)`,
 /// calls `common::setup()` to initialise the test with its own mongo database, performs the test & then
 /// executes the cleanup future once the test has ran. This is to avoid on the repeated writing of boilerplate
 /// in tests.
@@ -17,7 +17,7 @@ pub fn test_with_cleanup(_args: TokenStream, items: TokenStream) -> TokenStream 
     quote!(
         #[test]
         fn #ident() -> anyhow::Result<()> {
-            let rt = RT.get_or_init(|| tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("failed to build runtime"));
+            let rt = common::rt();
 
             rt.block_on(async {
                 let (mongo, config, cleanup) = common::setup().await?;
