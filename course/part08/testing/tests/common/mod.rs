@@ -35,9 +35,7 @@ impl GlobalRuntime {
         self.rt.block_on(f)
     }
 
-    pub async fn setup(
-        &self,
-    ) -> anyhow::Result<(mongodb::Client, AppConfig, impl Future<Output = ()>)> {
+    pub async fn setup(&self) -> (mongodb::Client, AppConfig, impl Future<Output = ()>) {
         static SETUP: tokio::sync::OnceCell<(AppConfig, mongodb::Client)> =
             tokio::sync::OnceCell::const_new();
 
@@ -65,6 +63,6 @@ impl GlobalRuntime {
             }
         };
 
-        Ok((mongo, config, cleanup))
+        (mongo, config, cleanup)
     }
 }

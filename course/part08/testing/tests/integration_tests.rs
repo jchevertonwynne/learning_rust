@@ -9,7 +9,7 @@ use testing::{
     deck_of_cards::DeckOfCardsClient,
     model::{DeckID, DeckInfo},
     mongo::MongoRecordController,
-    state::{DeckService, MockMongo, NewDeckError, NewDecksRequest, NewDecksResponse},
+    state::{DeckService, DeckServiceError, MockMongo, NewDecksRequest, NewDecksResponse},
 };
 use testing_cleanup::test_with_cleanup;
 
@@ -18,7 +18,7 @@ fn new_decks_success_flawed_cleanup() -> anyhow::Result<()> {
     let rt = common::rt();
 
     rt.block_on(async {
-        let (mongo, config, cleanup) = rt.setup().await?;
+        let (mongo, config, cleanup) = rt.setup().await;
 
         let deck_id = DeckID::random();
         let deck_info = DeckInfo {
@@ -63,7 +63,7 @@ fn new_decks_success_manual_cleanup() -> anyhow::Result<()> {
     let rt = common::rt();
 
     rt.block_on(async {
-        let (mongo, config, cleanup) = rt.setup().await?;
+        let (mongo, config, cleanup) = rt.setup().await;
 
         let handle = tokio::spawn(async move {
             let deck_id = DeckID::random();
@@ -185,7 +185,7 @@ async fn new_decks_mongo_failure() -> anyhow::Result<()> {
     let resp = state.new_deck(NewDecksRequest { decks: 1 }).await;
 
     assert!(
-        matches!(resp, Err(NewDeckError::MongoError(_))),
+        matches!(resp, Err(DeckServiceError::MongoError(_))),
         "expected a mongo call error"
     );
     assert!(

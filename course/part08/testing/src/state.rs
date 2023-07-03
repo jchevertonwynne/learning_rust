@@ -1,26 +1,28 @@
 use async_trait::async_trait;
-use futures::{StreamExt, TryStreamExt};
+use futures::{FutureExt, StreamExt, TryStreamExt};
 use mockall::automock;
 
 use crate::model::{DeckID, DeckInfo, DrawnCardsInfo};
+
+type Result<T, E = DeckServiceError> = std::result::Result<T, E>;
 
 /// Trait describing the operations used on the deck of cards API
 #[automock]
 #[async_trait]
 pub trait DeckOfCards {
-    // Creates a deck consisting of multiple regular 52 card decks shuffled
+    /// Creates a deck consisting of multiple regular 52 card decks shuffled
     async fn new_deck(&self, decks: usize) -> Result<DeckInfo, reqwest::Error>;
-    // Attempts to draw n cards from a given deck
+    /// Attempts to draw n cards from a given deck
     async fn draw_cards(&self, deck_id: DeckID, n: u8) -> Result<DrawnCardsInfo, reqwest::Error>;
 }
 
-// A trait descibiing the bookkeeping operations tracking usage of a deck ID
+/// Trait describing the bookkeeping operations tracking usage of a deck ID
 #[automock]
 #[async_trait]
 pub trait Mongo {
-    // Creates a new record
+    /// Creates a new record
     async fn create(&self, deck_id: DeckID) -> Result<(), mongodb::error::Error>;
-    // Updates the operation count for a record
+    /// Updates the operation count for a record
     async fn increment_count(&self, deck_id: DeckID) -> Result<(), mongodb::error::Error>;
 }
 
@@ -43,10 +45,7 @@ where
     D: DeckOfCards,
     M: Mongo,
 {
-    pub async fn new_deck(
-        &self,
-        new_decks_request: NewDecksRequest,
-    ) -> Result<NewDecksResponse, NewDeckError> {
+    pub async fn new_deck(&self, new_decks_request: NewDecksRequest) -> Result<NewDecksResponse> {
         let NewDecksRequest { decks } = new_decks_request;
 
         let DeckInfo {
@@ -54,7 +53,7 @@ where
         } = self.deck_client.new_deck(decks).await?;
 
         if !success {
-            return Err(NewDeckError::FalseSuccess);
+            return Err(DeckServiceError::FalseSuccess);
         }
 
         self.record_controller.create(deck_id).await?;
@@ -65,7 +64,7 @@ where
     pub async fn draw_cards(
         &self,
         draw_cards_request: DrawCardsRequest,
-    ) -> Result<DrawCardsResponse, DrawCardsError> {
+    ) -> Result<DrawCardsResponse> {
         let DrawCardsRequest {
             deck_id,
             hands,
@@ -73,10 +72,6 @@ where
         } = draw_cards_request;
 
         let hands = self.draw_all_cards(deck_id, hands, count).await?;
-
-        if hands.iter().any(|h| !h.success) {
-            return Err(DrawCardsError::FalseSuccess);
-        }
 
         self.record_controller.increment_count(deck_id).await?;
 
@@ -93,11 +88,21 @@ where
         deck_id: DeckID,
         hands: usize,
         count: u8,
-    ) -> Result<Vec<DrawnCardsInfo>, reqwest::Error> {
-        futures::stream::iter((0..hands).map(|_| self.deck_client.draw_cards(deck_id, count)))
-            .buffer_unordered(5)
-            .try_collect()
-            .await
+    ) -> Result<Vec<DrawnCardsInfo>> {
+        futures::stream::iter((0..hands).map(|_| {
+            self.deck_client.draw_cards(deck_id, count).map(|r| {
+                r.map_err(DeckServiceError::ReqwestError).and_then(|info| {
+                    if info.success {
+                        Err(DeckServiceError::FalseSuccess)
+                    } else {
+                        Ok(info)
+                    }
+                })
+            })
+        }))
+        .buffer_unordered(5)
+        .try_collect()
+        .await
     }
 }
 
@@ -112,7 +117,7 @@ pub struct NewDecksResponse {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum NewDeckError {
+pub enum DeckServiceError {
     #[error("request did not return back success value")]
     FalseSuccess,
     #[error("failed to request new deck: {0}")]
@@ -131,16 +136,6 @@ pub struct DrawCardsRequest {
 #[derive(Debug, PartialEq, Eq)]
 pub struct DrawCardsResponse {
     pub hands: Vec<DrawnCardsInfo>,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum DrawCardsError {
-    #[error("request did not return back success value")]
-    FalseSuccess,
-    #[error("failed to request drawn cards: {0}")]
-    ReqwestError(#[from] reqwest::Error),
-    #[error("failed to update mongo: {0}")]
-    MongoError(#[from] mongodb::error::Error),
 }
 
 #[cfg(test)]
