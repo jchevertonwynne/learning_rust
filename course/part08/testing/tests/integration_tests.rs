@@ -18,7 +18,7 @@ fn new_decks_success_flawed_cleanup() -> anyhow::Result<()> {
     let rt = common::rt();
 
     rt.block_on(async {
-        let (mongo, config, cleanup) = common::setup().await?;
+        let (mongo, config, cleanup) = rt.setup().await?;
 
         let deck_id = DeckID::random();
         let deck_info = DeckInfo {
@@ -50,7 +50,7 @@ fn new_decks_success_flawed_cleanup() -> anyhow::Result<()> {
             "expected a response with the predetermined deck ID"
         );
 
-        cleanup.await?;
+        cleanup.await;
 
         Ok::<(), anyhow::Error>(())
     })?;
@@ -63,7 +63,7 @@ fn new_decks_success_manual_cleanup() -> anyhow::Result<()> {
     let rt = common::rt();
 
     rt.block_on(async {
-        let (mongo, config, cleanup) = common::setup().await?;
+        let (mongo, config, cleanup) = rt.setup().await?;
 
         let handle = tokio::spawn(async move {
             let deck_id = DeckID::random();
@@ -101,7 +101,7 @@ fn new_decks_success_manual_cleanup() -> anyhow::Result<()> {
 
         let res = handle.await;
 
-        cleanup.await?;
+        cleanup.await;
 
         res??;
 

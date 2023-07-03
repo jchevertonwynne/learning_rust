@@ -20,13 +20,13 @@ pub fn test_with_cleanup(_args: TokenStream, items: TokenStream) -> TokenStream 
             let rt = common::rt();
 
             rt.block_on(async {
-                let (mongo, config, cleanup) = common::setup().await?;
+                let (mongo, config, cleanup) = rt.setup().await?;
 
                 #my_fn
 
                 let res = ::tokio::spawn(test_inner_fn(mongo, config)).await;
 
-                cleanup.await?;
+                cleanup.await;
 
                 res??;
 
