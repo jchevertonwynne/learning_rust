@@ -11,20 +11,20 @@ use syn::ItemFn;
 pub fn test_with_cleanup(_args: TokenStream, items: TokenStream) -> TokenStream {
     let mut my_fn: ItemFn = syn::parse(items).unwrap();
 
-    let new_ident = Ident::new("test_inner_fn", my_fn.sig.ident.span());
+    let new_ident = Ident::new("__test_inner_fn", my_fn.sig.ident.span());
     let ident = std::mem::replace(&mut my_fn.sig.ident, new_ident);
 
     quote!(
-        #[test]
-        fn #ident() -> anyhow::Result<()> {
-            let rt = common::rt();
+        #[::core::prelude::v1::test]
+        fn #ident() -> ::anyhow::Result<()> {
+            let rt = crate::common::rt();
 
             rt.block_on(async {
                 let (mongo, config, cleanup) = rt.setup().await;
 
                 #my_fn
 
-                let res = ::tokio::spawn(test_inner_fn(mongo, config)).await;
+                let res = ::tokio::spawn(__test_inner_fn(mongo, config)).await;
 
                 cleanup.await;
 

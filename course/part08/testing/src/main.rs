@@ -16,14 +16,14 @@ async fn main() -> anyhow::Result<()> {
     let record_controller =
         MongoRecordController::new(&mongo_client, config.mongo_config.database_info);
 
-    let state = DeckService::new(
+    let service = DeckService::new(
         DeckOfCardsClient::new(config.deck_of_cards, reqwest_client),
         record_controller,
     );
 
-    let NewDecksResponse { deck_id } = state.new_deck(NewDecksRequest { decks: 20 }).await?;
+    let NewDecksResponse { deck_id } = service.new_deck(NewDecksRequest { decks: 20 }).await?;
 
-    let DrawCardsResponse { hands } = state
+    let DrawCardsResponse { hands } = service
         .draw_cards(DrawCardsRequest {
             deck_id,
             hands: 20,

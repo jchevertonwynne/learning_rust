@@ -1,3 +1,7 @@
+//! This is a module level doc (hopefully)
+//! 
+//! This second line is only shown on this page and not on the preview on the previous
+
 use config::{Config, ConfigError};
 use serde::Deserialize;
 use url::Url;

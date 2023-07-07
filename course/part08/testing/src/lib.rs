@@ -1,3 +1,5 @@
+//! This is my testing documentation example!
+
 pub mod config;
 pub mod deck_of_cards;
 pub mod model;
@@ -10,6 +12,32 @@ mod tests {
     use mockall::{automock, predicate};
     use std::num::NonZeroUsize;
     use test_case::test_case;
+
+    #[test]
+    fn math_works() {
+        assert!("hello".len() > 3);
+        assert_eq!(4, 1 + 3, "numbers should be equal")
+    }
+
+    #[test]
+    #[should_panic(expected = "h n")]
+    fn panics_are_caught() {
+        panic!("oh no")
+    }
+
+    #[test]
+    fn tests_can_return_results() -> Result<(), usize> {
+        Ok(())
+    }
+
+    #[test]
+    fn tests_can_return_results2() -> Result<(), usize> {
+        Ok::<(), usize>(())?;
+
+        // Err::<(), usize>(2)?;
+
+        Ok(())
+    }
 
     #[automock]
     #[async_trait]
@@ -43,7 +71,7 @@ mod tests {
         d.expect_my_method_async()
             .with(
                 predicate::function(|s: &str| s.len() == 5),
-                predicate::eq("world!"),
+                predicate::str::starts_with("wo"),
             )
             .returning(|a, b| a.len() + b.len())
             .once();
