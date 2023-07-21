@@ -67,9 +67,10 @@ impl RabbitConsumer for MyMessageConsumer {
             return Err(MyMessageConsumerError::ArbitraryError(msgs_received));
         }
 
-        let is_borrowed = matches!(msg.name, Cow::Borrowed(_));
+        // let is_borrowed = matches!(msg.name, Cow::Borrowed(_));
 
-        info!("got message #{msgs_received}: {msg:?} - name is borrowed = {is_borrowed} - total processed = {total_msgs_received}");
+        // info!("got message #{msgs_received}: {msg:?} - name is borrowed = {is_borrowed} - total processed = {total_msgs_received}");
+        info!("got message #{msgs_received}: {msg:?} - total processed = {total_msgs_received}");
 
         Ok(())
     }

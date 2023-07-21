@@ -168,8 +168,7 @@ impl Rabbit {
         let mut headers = ft_default();
         headers.insert("content-type".into(), LongString("application/json".into()));
         headers.insert("message_type".into(), LongString(message_type.into()));
-        let resp = self
-            .chan
+        self.chan
             .basic_publish(
                 exchange,
                 ROUTING,
@@ -178,8 +177,8 @@ impl Rabbit {
                 BasicProperties::default().with_headers(headers),
             )
             .await?
-            .await?;
-        Ok(resp)
+            .await
+            .map_err(Into::into)
     }
 
     #[instrument(skip(self, rabbit_delegator, kill_signal))]
@@ -254,7 +253,7 @@ async fn run_consumer<D: RabbitDelegator>(
                 error!("error on delivery?: {}", err);
                 continue;
             }
-            None => return,
+            None => break,
         };
 
         let Some(header) = delivery
@@ -469,3 +468,4 @@ delegator_tuple!(A, B, C, D, E, F, G);
 delegator_tuple!(A, B, C, D, E, F, G, H);
 delegator_tuple!(A, B, C, D, E, F, G, H, I);
 delegator_tuple!(A, B, C, D, E, F, G, H, I, J);
+delegator_tuple!(A, B, C, D, E, F, G, H, I, J, K);

@@ -32,36 +32,36 @@ async fn main() -> anyhow::Result<()> {
         )
         .await?;
 
-    // rabbit
-    //     .publish_json(
-    //         EXCHANGE,
-    //         MESSAGE_TYPE,
-    //         MyMessage {
-    //             age: 25,
-    //             name: "\newline encoded".into(),
-    //         },
-    //     )
-    //     .await?;
-
     rabbit
         .publish_json(
             EXCHANGE,
-            MESSAGE_TYPE_2,
-            OtherMessage {
-                school_age: SchoolAge::Primary,
-                pupils: vec![
-                    Pupil {
-                        first_name: "jason".to_string(),
-                        second_name: "mccullough".to_string(),
-                    },
-                    Pupil {
-                        first_name: "tian".to_string(),
-                        second_name: "lee".to_string(),
-                    },
-                ],
+            MESSAGE_TYPE,
+            MyMessage {
+                age: 25,
+                name: "\newline encoded".into(),
             },
         )
         .await?;
+
+    // rabbit
+    //     .publish_json(
+    //         EXCHANGE,
+    //         MESSAGE_TYPE_2,
+    //         OtherMessage {
+    //             school_age: SchoolAge::Primary,
+    //             pupils: vec![
+    //                 Pupil {
+    //                     first_name: "jason".to_string(),
+    //                     second_name: "mccullough".to_string(),
+    //                 },
+    //                 Pupil {
+    //                     first_name: "david".to_string(),
+    //                     second_name: "petran".to_string(),
+    //                 },
+    //             ],
+    //         },
+    //     )
+    //     .await?;
 
     info!("goodbye!");
 

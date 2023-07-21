@@ -35,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
             QUEUE,
             (
                 MyMessageConsumer::new(global_counter.clone()),
-                // OtherMessageConsumer::new(global_counter),
+                OtherMessageConsumer::new(global_counter),
             ),
             cancel.clone(),
         )
