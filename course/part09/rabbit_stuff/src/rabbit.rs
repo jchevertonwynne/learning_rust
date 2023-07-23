@@ -3,7 +3,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use async_channel::{Receiver, Sender};
+use async_channel::Receiver;
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use futures::StreamExt;
@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use tokio::select;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, instrument, span::Span, Instrument, info, info_span};
+use tracing::{error, instrument, Instrument, info, info_span};
 
 pub const QUEUE: &str = "queue-joseph";
 pub const EXCHANGE: &str = "exchange-joseph";
@@ -63,41 +63,8 @@ impl Rabbit {
         Ok(Rabbit { conn, chan })
     }
 
-    pub async fn declare_exchange(&self, exchange: &str) -> Result<(), lapin::Error> {
-        self.chan
-            .exchange_declare(
-                exchange,
-                ExchangeKind::Headers,
-                ExchangeDeclareOptions::default(),
-                ft_default(),
-            )
-            .await
-    }
-
-    pub async fn declare_queue(&self, queue: &str) -> Result<(), lapin::Error> {
-        self.chan
-            .queue_declare(
-                queue,
-                QueueDeclareOptions::default(),
-                ft_default(),
-            )
-            .await
-            .map(|_| ())
-    }
-
-    pub async fn bind_queue(&self, queue: &str, exchange: &str) -> Result<(), lapin::Error> {
-        self.chan
-            .queue_bind(
-                queue,
-                exchange,
-                ROUTING,
-                QueueBindOptions::default(),
-                ft_default(),
-            )
-            .await
-    }
-
-    pub async fn setup(&self) -> lapin::Result<()> {
+    // ensure exchange + queue exist and bind them together
+    pub async fn setup(&self) -> Result<(), lapin::Error> {
         self.chan
             .exchange_declare(
                 EXCHANGE,
@@ -180,8 +147,7 @@ impl Rabbit {
             .await?;
 
         Ok(tokio::spawn(
-            run_consumer(rabbit_delegator, consumer, self.chan.clone(), kill_signal)
-                .instrument(Span::current()),
+            run_consumer(rabbit_delegator, consumer, self.chan.clone(), kill_signal).in_current_span()
         ))
     }
 }
@@ -200,7 +166,7 @@ async fn run_consumer<D: RabbitDelegator>(
     channel: Channel,
     kill_signal: CancellationToken,
 ) {
-    let (sender, receiver): (Sender<Delivery>, Receiver<_>) = async_channel::unbounded();
+    let (sender, receiver) = async_channel::unbounded();
 
     // put delegator in an arc as we need to share it between the workers
     let delegator = Arc::new(delegator);
@@ -228,6 +194,7 @@ async fn run_consumer<D: RabbitDelegator>(
 
         // None if consumer cancelled
         let Some(delivery) = delivery else {
+            error!("consumer was unexpectedly cancelled");
             break;
         };
 
@@ -329,8 +296,8 @@ async fn worker<D: RabbitDelegator>(
     info!("shutting down worker!")
 }
 
-// A trait for rabbit consumer/delegator errors
-// that decides if a message should be requeued or not
+// A trait for rabbit consumer/delegator errors that decides if a message should be
+// requeued or not. defaults to not requeueing
 pub trait ShouldRequeue {
     fn should_requeue(&self) -> Requeue {
         Requeue::No
@@ -379,7 +346,7 @@ pub trait RabbitConsumer: Sync + Send + 'static {
     }
 }
 
-// RabbitDelegator represents a thing which 'delegates' an incoming message
+// RabbitDelegator represents a thing which 'delegates' an incoming message from a rabbit queue
 // to one of multiple consumers. the macro impls below create delegators of
 // tuples of rabbit consumers & simply checks their headers match
 // before passing it to the appropriate consumer
@@ -398,12 +365,8 @@ pub enum DelegateFut<'a> {
 #[error("delegator was unable to match the message-type header")]
 struct NoHeaderMatch;
 
-// if the headers didnt match now, they never will
-impl ShouldRequeue for NoHeaderMatch {
-    fn should_requeue(&self) -> Requeue {
-        Requeue::No
-    }
-}
+// if the headers didnt match now, they never will so default ShouldRequeue::No is fine
+impl ShouldRequeue for NoHeaderMatch {}
 
 // a trait for all consumer errors, needed for the Box<dyn>
 // as that can only contain 1 trait + any auto traits
@@ -413,7 +376,9 @@ pub trait RequeueableError: std::error::Error + ShouldRequeue + Send {}
 impl<T> RequeueableError for T where T: std::error::Error + ShouldRequeue + Send {}
 
 // DelegateFut returns a type erased error object, similar to the error
-// interface in go. we do this because
+// interface in go. we do this because we could have any number of errors
+// and the cost of boxing probably isn't very high considering that failures
+// are not the expected case
 impl<'a> Future for DelegateFut<'a> {
     type Output = Result<(), Box<dyn RequeueableError>>;
 
@@ -428,7 +393,6 @@ impl<'a> Future for DelegateFut<'a> {
 
 macro_rules! delegator_tuple {
     ( $ty:tt ) => {
-        #[allow(unused_parens)]
         impl< $ty > RabbitDelegator for $ty
         where
             $ty: RabbitConsumer
@@ -441,7 +405,6 @@ macro_rules! delegator_tuple {
             }
         }
 
-        #[allow(unused_parens)]
         #[async_trait]
         impl< $ty > RabbitDelegator for ($ty,)
         where
@@ -457,7 +420,6 @@ macro_rules! delegator_tuple {
         }
     };
     ( $($ty:tt),* ) => {
-        #[allow(unused_parens)]
         #[async_trait]
         impl< $($ty),* > RabbitDelegator for (
             $($ty),*
