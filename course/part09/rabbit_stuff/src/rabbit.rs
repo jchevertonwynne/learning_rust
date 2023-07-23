@@ -1,4 +1,7 @@
 use std::{fmt::Debug, sync::Arc};
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use async_channel::{Receiver, Sender};
 use async_trait::async_trait;
@@ -23,11 +26,14 @@ use lapin::{
     Consumer,
     ExchangeKind,
 };
+use lapin::message::Delivery;
+use pin_project::pin_project;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::select;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, instrument, span, span::Span, Instrument};
+use tracing::{error, instrument, span::Span, Instrument, info, info_span};
 
 pub const QUEUE: &str = "queue-joseph";
 pub const EXCHANGE: &str = "exchange-joseph";
@@ -62,13 +68,7 @@ impl Rabbit {
             .exchange_declare(
                 exchange,
                 ExchangeKind::Headers,
-                ExchangeDeclareOptions {
-                    passive: false,
-                    durable: true,
-                    auto_delete: false,
-                    internal: false,
-                    nowait: false,
-                },
+                ExchangeDeclareOptions::default(),
                 ft_default(),
             )
             .await
@@ -78,13 +78,7 @@ impl Rabbit {
         self.chan
             .queue_declare(
                 queue,
-                QueueDeclareOptions {
-                    passive: false,
-                    durable: true,
-                    auto_delete: false,
-                    exclusive: false,
-                    nowait: false,
-                },
+                QueueDeclareOptions::default(),
                 ft_default(),
             )
             .await
@@ -92,18 +86,13 @@ impl Rabbit {
     }
 
     pub async fn bind_queue(&self, queue: &str, exchange: &str) -> Result<(), lapin::Error> {
-        let field_table = {
-            let mut ft = FieldTable::default();
-            ft.insert("x-match".into(), LongString("all".into()));
-            ft
-        };
         self.chan
             .queue_bind(
                 queue,
                 exchange,
                 ROUTING,
-                QueueBindOptions { nowait: false },
-                field_table,
+                QueueBindOptions::default(),
+                ft_default(),
             )
             .await
     }
@@ -113,13 +102,7 @@ impl Rabbit {
             .exchange_declare(
                 EXCHANGE,
                 ExchangeKind::Headers,
-                ExchangeDeclareOptions {
-                    passive: false,
-                    durable: true,
-                    auto_delete: false,
-                    internal: false,
-                    nowait: false,
-                },
+                ExchangeDeclareOptions::default(),
                 ft_default(),
             )
             .await?;
@@ -127,13 +110,7 @@ impl Rabbit {
         self.chan
             .queue_declare(
                 QUEUE,
-                QueueDeclareOptions {
-                    passive: false,
-                    durable: true,
-                    auto_delete: false,
-                    exclusive: false,
-                    nowait: false,
-                },
+                QueueDeclareOptions::default(),
                 ft_default(),
             )
             .await?;
@@ -143,7 +120,7 @@ impl Rabbit {
                 QUEUE,
                 EXCHANGE,
                 ROUTING,
-                QueueBindOptions { nowait: false },
+                QueueBindOptions::default(),
                 ft_default(),
             )
             .await?;
@@ -213,49 +190,70 @@ pub enum PublishError {
     RabbitError(#[from] lapin::Error),
 }
 
-struct Payload {
-    delivery_tag: u64,
-    header: String,
-    contents: Vec<u8>,
-}
-
 async fn run_consumer<D: RabbitDelegator>(
     delegator: D,
     mut consumer: Consumer,
     channel: Channel,
     kill_signal: CancellationToken,
 ) {
-    let (sender, receiver): (Sender<Payload>, Receiver<_>) = async_channel::unbounded();
-    let killer = CancellationToken::new();
+    let (sender, receiver): (Sender<Delivery>, Receiver<_>) = async_channel::unbounded();
 
     let delegator = Arc::new(delegator);
 
     let handles = (0..10)
-        .map(|_| {
+        .map(|i| {
+            let span = info_span!("worker", "num" = i);
             let channel = channel.clone();
             let delegator = Arc::clone(&delegator);
             let receiver = receiver.clone();
-            let kill_signal = killer.clone();
             tokio::spawn(
-                worker(channel, receiver, delegator, kill_signal).instrument(Span::current()),
+                worker(channel, receiver, delegator).instrument(span),
             )
         })
         .collect::<Vec<_>>();
 
     loop {
-        let delivery: Option<Result<lapin::message::Delivery, lapin::Error>> = tokio::select! {
+        let delivery: Option<Result<Delivery, lapin::Error>> = select! {
+            delivery = consumer.next() => delivery,
             _ = kill_signal.cancelled() => break,
-            d = consumer.next() => d,
         };
+
+        let Some(delivery) = delivery else {
+            break;
+        };
+
         let delivery = match delivery {
-            Some(Ok(delivery)) => delivery,
-            Some(Err(err)) => {
+            Ok(delivery) => delivery,
+            Err(err) => {
                 error!("error on delivery?: {}", err);
                 continue;
             }
-            None => break,
         };
 
+        if let Err(err) = sender
+            .send(delivery)
+            .await
+        {
+            error!("rabbit consumer failed to send message: {err}");
+            break;
+        }
+    }
+
+    sender.close();
+
+    for handle in handles {
+        if let Err(err) = handle.await {
+            error!("worker handle failure: {err}")
+        }
+    }
+}
+
+async fn worker<D: RabbitDelegator>(
+    channel: Channel,
+    mut receiver: Receiver<Delivery>,
+    delegator: Arc<D>
+) {
+    while let Some(delivery) = receiver.next().await {
         let Some(header) = delivery
             .properties
             .headers()
@@ -272,85 +270,41 @@ async fn run_consumer<D: RabbitDelegator>(
         let delivery_tag = delivery.delivery_tag;
         let contents = delivery.data;
 
-        if let Err(err) = sender
-            .send(Payload {
-                delivery_tag,
-                header,
-                contents,
-            })
-            .await
-        {
-            error!("rabbit consumer failed to send message: {err}");
-            break;
-        }
-    }
+        let span = info_span!("processing message", header);
 
-    killer.cancel();
+        async {
+            let delegate_result = delegator.delegate(&header, contents).await;
 
-    for handle in handles {
-        if let Err(err) = handle.await {
-            error!("worker handle failure: {err}")
-        }
-    }
-}
-
-async fn worker<D: RabbitDelegator>(
-    channel: Channel,
-    receiver: Receiver<Payload>,
-    delegator: Arc<D>,
-    kill_signal: CancellationToken,
-) {
-    loop {
-        let Payload {
-            delivery_tag,
-            header,
-            contents,
-        } = tokio::select! {
-            _ = kill_signal.cancelled() => {
-                info!("shutting down worker!");
-                return;
-            },
-            delivery = receiver.recv() => match delivery {
-                Ok(delivery) => delivery,
-                Err(err) => {
-                    error!("failed to get message: {err}");
-                    break;
+            match delegate_result {
+                Ok(_) => {
+                    if let Err(err) = channel
+                        .basic_ack(delivery_tag, BasicAckOptions::default())
+                        .await
+                    {
+                        error!("failed to ack msg: {}", err);
+                    }
                 }
-            },
-        };
-
-        let span = span!(tracing::Level::INFO, "processing message", header);
-        let _entered = span.enter();
-
-        let delegate_result = delegator.delegate(&header, contents).await;
-
-        match delegate_result {
-            Ok(_) => {
-                if let Err(err) = channel
-                    .basic_ack(delivery_tag, BasicAckOptions::default())
-                    .await
-                {
-                    error!("failed to ack msg: {}", err);
+                Err(requeue) => {
+                    let requeue = requeue.into();
+                    error!("failed to delegate message - requeue = {requeue}");
+                    if let Err(err) = channel
+                        .basic_nack(
+                            delivery_tag,
+                            BasicNackOptions {
+                                requeue,
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                    {
+                        error!("failed to nack msg: {}", err);
+                    }
                 }
             }
-            Err(requeue) => {
-                let requeue = requeue.into();
-                error!("failed to delegate message - requeue = {requeue}");
-                if let Err(err) = channel
-                    .basic_nack(
-                        delivery_tag,
-                        BasicNackOptions {
-                            requeue,
-                            ..Default::default()
-                        },
-                    )
-                    .await
-                {
-                    error!("failed to nack msg: {}", err);
-                }
-            }
-        }
+        }.instrument(span).await;
     }
+
+    info!("shutting down worker!")
 }
 
 pub trait ShouldRequeue {

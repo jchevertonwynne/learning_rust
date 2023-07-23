@@ -14,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
                 .with_default_directive(LevelFilter::INFO.into())
                 .from_env_lossy(),
         )
-        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber::fmt::layer().with_line_number(true))
         .try_init()?;
 
     info!("hello!");
@@ -43,25 +43,27 @@ async fn main() -> anyhow::Result<()> {
         )
         .await?;
 
-    // rabbit
-    //     .publish_json(
-    //         EXCHANGE,
-    //         MESSAGE_TYPE_2,
-    //         OtherMessage {
-    //             school_age: SchoolAge::Primary,
-    //             pupils: vec![
-    //                 Pupil {
-    //                     first_name: "jason".to_string(),
-    //                     second_name: "mccullough".to_string(),
-    //                 },
-    //                 Pupil {
-    //                     first_name: "david".to_string(),
-    //                     second_name: "petran".to_string(),
-    //                 },
-    //             ],
-    //         },
-    //     )
-    //     .await?;
+    rabbit
+        .publish_json(
+            EXCHANGE,
+            MESSAGE_TYPE_2,
+            OtherMessage {
+                school_age: SchoolAge::Primary,
+                pupils: vec![
+                    Pupil {
+                        first_name: "jason".to_string(),
+                        second_name: "mccullough".to_string(),
+                    },
+                    Pupil {
+                        first_name: "david".to_string(),
+                        second_name: "petran".to_string(),
+                    },
+                ],
+            },
+        )
+        .await?;
+
+    rabbit.close().await?;
 
     info!("goodbye!");
 

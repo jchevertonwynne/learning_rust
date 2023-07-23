@@ -17,30 +17,31 @@ async fn main() -> anyhow::Result<()> {
     info!("hello!");
 
     let span = info_span!("running redis");
-    let entered = span.entered();
 
-    let r = redis::Client::open("redis://127.0.0.1:6379")?;
-    let conn = Arc::new(Mutex::new(
-        r.get_tokio_connection()
-            .instrument(info_span!("getting async redis connection"))
-            .await?,
-    ));
+    async {
+        let r = redis::Client::open("redis://127.0.0.1:6379")?;
+        let conn = Arc::new(Mutex::new(
+            r.get_tokio_connection()
+                .instrument(info_span!("getting async redis connection"))
+                .await?,
+        ));
 
-    let mut service = ServiceBuilder::new()
-        .layer(RequestCounterLayer::new(RedisGetChecker::new(
-            redis::Value::Data("world2".as_bytes().to_vec()),
-        )))
-        .service(RedisService { conn });
+        let mut service = ServiceBuilder::new()
+            .layer(RequestCounterLayer::new(RedisGetChecker::new(
+                redis::Value::Data("world2".as_bytes().to_vec()),
+            )))
+            .service(RedisService { conn });
 
-    service.call(RedisRequest::set("hello", "world")).await?;
-    let resp = service.call(RedisRequest::get("hello")).await?;
-    info!(" got resp {resp:?}");
+        service.call(RedisRequest::set("hello", "world")).await?;
+        let resp = service.call(RedisRequest::get("hello")).await?;
+        info!(" got resp {resp:?}");
 
-    service.call(RedisRequest::set("hello", "world2")).await?;
-    let resp = service.call(RedisRequest::get("hello")).await?;
-    info!(" got resp {resp:?}");
+        service.call(RedisRequest::set("hello", "world2")).await?;
+        let resp = service.call(RedisRequest::get("hello")).await?;
+        info!(" got resp {resp:?}");
 
-    entered.exit();
+        Ok::<(), anyhow::Error>(())
+    }.instrument(span).await?;
 
     info!("goodbye from redis!");
 
