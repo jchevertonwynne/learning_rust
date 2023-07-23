@@ -30,7 +30,6 @@ use lapin::{
 use lapin::message::Delivery;
 use pin_project::pin_project;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use tokio::select;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -136,6 +135,7 @@ impl Rabbit {
         err2
     }
 
+    // publishes a message to the provided exchange with a json serialized body
     pub async fn publish_json<S: Serialize>(
         &self,
         exchange: &str,
@@ -159,6 +159,9 @@ impl Rabbit {
             .map_err(Into::into)
     }
 
+    // consumes messages from a queue and the delegator is responsible for
+    // ensuring thew messages get consumed. in the provided implementations
+    // this means by a RabbitConsumer if the message-type header matches
     #[instrument(skip(self, rabbit_delegator, kill_signal))]
     pub async fn consume<D: RabbitDelegator>(
         &self,
@@ -183,7 +186,7 @@ impl Rabbit {
     }
 }
 
-#[derive(Error, Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum PublishError {
     #[error("failed to serialize struct: {0}")]
     SerializeError(#[from] serde_json::error::Error),
@@ -199,8 +202,12 @@ async fn run_consumer<D: RabbitDelegator>(
 ) {
     let (sender, receiver): (Sender<Delivery>, Receiver<_>) = async_channel::unbounded();
 
+    // put delegator in an arc as we need to share it between the workers
     let delegator = Arc::new(delegator);
 
+    // creates 10 workers for the queue & passes messages to them over a channel
+    // there is a builtin lapin::Consumer::set_delegate, but i wanted to limit
+    // the parallelism
     let handles = (0..10)
         .map(|i| {
             let span = info_span!("worker", "num" = i);
@@ -219,6 +226,7 @@ async fn run_consumer<D: RabbitDelegator>(
             _ = kill_signal.cancelled() => break,
         };
 
+        // None if consumer cancelled
         let Some(delivery) = delivery else {
             break;
         };
@@ -240,6 +248,8 @@ async fn run_consumer<D: RabbitDelegator>(
         }
     }
 
+    // close channel so workers shut down after
+    // finishing processing their current message
     sender.close();
 
     for handle in handles {
@@ -249,11 +259,15 @@ async fn run_consumer<D: RabbitDelegator>(
     }
 }
 
+
+// a worker is responsible for processing a lapin::message::Delivery
+// via the delegator
 async fn worker<D: RabbitDelegator>(
     channel: Channel,
     mut receiver: Receiver<Delivery>,
     delegator: Arc<D>
 ) {
+    // consumes from channel whilst it's not closed
     while let Some(delivery) = receiver.next().await {
         let Some(header) = delivery
             .properties
@@ -273,9 +287,16 @@ async fn worker<D: RabbitDelegator>(
 
         let span = info_span!("processing message", header);
 
+        // async{}.instrument(...).await is used as we cannot use
+        // let _entered = span.enter() in async. .instrument allows us
+        // to enter & exit from the span's scope when the future is polled, whereas
+        // span.enter() would be entered for the entire time the future exists and not
+        // just when it's running
         async {
             let delegate_result = delegator.delegate(&header, contents).await;
 
+            // on success we ack, on failure we rack & requeue if the error allows for
+            //it (due to reasons such as transient failures etc)
             match delegate_result {
                 Ok(_) => {
                     if let Err(err) = channel
@@ -285,9 +306,9 @@ async fn worker<D: RabbitDelegator>(
                         error!("failed to ack msg: {}", err);
                     }
                 }
-                Err(requeue) => {
-                    let requeue = requeue.into();
-                    error!("failed to delegate message - requeue = {requeue}");
+                Err(err) => {
+                    let requeue = err.should_requeue().into();
+                    error!("failed to delegate message: {err} - requeue = {requeue}");
                     if let Err(err) = channel
                         .basic_nack(
                             delivery_tag,
@@ -332,14 +353,12 @@ impl From<Requeue> for bool {
 }
 
 // A trait that represents a consumer of a specific rabbit message_type header
-// defaults to json deserialization, so it's required that the error type
-// supports json errors
 #[async_trait]
 pub trait RabbitConsumer: Sync + Send + 'static {
     const MESSAGE_TYPE_HEADER: &'static str;
 
     type Message<'a>: Deserialize<'a> + Send;
-    type ConsumerError: std::error::Error + From<serde_json::Error> + ShouldRequeue;
+    type ConsumerError: RequeueableError + From<serde_json::Error>;
 
     fn parse_msg<'a>(&self, contents: &'a [u8]) -> Result<Self::Message<'a>, Self::ConsumerError> {
         serde_json::from_slice(contents).map_err(Into::into)
@@ -347,10 +366,10 @@ pub trait RabbitConsumer: Sync + Send + 'static {
 
     async fn process(&self, msg: Self::Message<'_>) -> Result<(), Self::ConsumerError>;
 
-    async fn try_process(&self, contents: Vec<u8>) -> Result<(), Requeue> {
+    async fn try_process(&self, contents: Vec<u8>) -> Result<(), Box<dyn RequeueableError>> {
         self.try_process_inner(contents).await.map_err(|err| {
             error!("failed to process message: {}", err);
-            ShouldRequeue::should_requeue(&err)
+            Box::new(err) as Box<dyn RequeueableError>
         })
     }
 
@@ -371,18 +390,38 @@ pub trait RabbitDelegator: Send + Sync + 'static {
 #[pin_project(project=DelegateFutProj)]
 pub enum DelegateFut<'a> {
     // we are using `async_trait` on consumers so this is unavoidable
-    Fut(#[pin] BoxFuture<'a, Result<(), Requeue>>),
-    Immediate(Requeue)
+    ConsumerFut(#[pin] BoxFuture<'a, Result<(), Box<dyn RequeueableError>>>),
+    NoHeaderMatch
 }
 
+#[derive(thiserror::Error, Debug)]
+#[error("delegator was unable to match the message-type header")]
+struct NoHeaderMatch;
+
+// if the headers didnt match now, they never will
+impl ShouldRequeue for NoHeaderMatch {
+    fn should_requeue(&self) -> Requeue {
+        Requeue::No
+    }
+}
+
+// a trait for all consumer errors, needed for the Box<dyn>
+// as that can only contain 1 trait + any auto traits
+pub trait RequeueableError: std::error::Error + ShouldRequeue + Send {}
+
+// automatically implement for all appropriate types, no need to do it manually!
+impl<T> RequeueableError for T where T: std::error::Error + ShouldRequeue + Send {}
+
+// DelegateFut returns a type erased error object, similar to the error
+// interface in go. we do this because
 impl<'a> Future for DelegateFut<'a> {
-    type Output = Result<(), Requeue>;
+    type Output = Result<(), Box<dyn RequeueableError>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         match this {
-            DelegateFutProj::Fut(f) => f.poll(cx),
-            DelegateFutProj::Immediate(requeue) => Poll::Ready(Err(*requeue))
+            DelegateFutProj::ConsumerFut(f) => f.poll(cx),
+            DelegateFutProj::NoHeaderMatch => Poll::Ready(Err(Box::new(NoHeaderMatch)))
         }
     }
 }
@@ -396,9 +435,9 @@ macro_rules! delegator_tuple {
         {
             fn delegate(&self, header: &str, contents: Vec<u8>) -> DelegateFut {
                 if $ty::MESSAGE_TYPE_HEADER == header {
-                    return DelegateFut::Fut(self.try_process(contents));
+                    return DelegateFut::ConsumerFut(self.try_process(contents));
                 }
-                DelegateFut::Immediate(Requeue::No)
+                DelegateFut::NoHeaderMatch
             }
         }
 
@@ -411,9 +450,9 @@ macro_rules! delegator_tuple {
             fn delegate(&self, header: &str, contents: Vec<u8>) -> DelegateFut {
                 let (casey::lower!($ty),) = self;
                 if $ty::MESSAGE_TYPE_HEADER == header {
-                    return DelegateFut::Fut(casey::lower!($ty).try_process(contents));
+                    return DelegateFut::ConsumerFut(casey::lower!($ty).try_process(contents));
                 }
-                DelegateFut::Immediate(Requeue::No)
+                DelegateFut::NoHeaderMatch
             }
         }
     };
@@ -430,15 +469,17 @@ macro_rules! delegator_tuple {
                 let ($(casey::lower!($ty)),*) = self;
                 $(
                 if $ty::MESSAGE_TYPE_HEADER == header {
-                    return DelegateFut::Fut(casey::lower!($ty).try_process(contents));
+                    return DelegateFut::ConsumerFut(casey::lower!($ty).try_process(contents));
                 }
                 )*
-                DelegateFut::Immediate(Requeue::No)
+                DelegateFut::NoHeaderMatch
             }
         }
     }
 }
 
+// delegator implementations for a single RabbitConsumer and
+// tuples of size 1 to 10 of RabbitConsumers
 delegator_tuple!(A);
 delegator_tuple!(A, B);
 delegator_tuple!(A, B, C);
@@ -449,4 +490,3 @@ delegator_tuple!(A, B, C, D, E, F, G);
 delegator_tuple!(A, B, C, D, E, F, G, H);
 delegator_tuple!(A, B, C, D, E, F, G, H, I);
 delegator_tuple!(A, B, C, D, E, F, G, H, I, J);
-delegator_tuple!(A, B, C, D, E, F, G, H, I, J, K);

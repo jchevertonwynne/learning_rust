@@ -13,6 +13,7 @@ use tracing::info;
 
 use crate::rabbit::{RabbitConsumer, Requeue, ShouldRequeue, MESSAGE_TYPE, MESSAGE_TYPE_2};
 
+// a consumer with a counter for its own requests & a shared counter with the other consumer
 #[derive(Debug, Default)]
 pub struct MyMessageConsumer {
     received: AtomicUsize,
@@ -28,6 +29,8 @@ impl MyMessageConsumer {
     }
 }
 
+// name is a Cow<str>, which means it can do 0 copy string deserialization
+// if there are no escape chars in the source string
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MyMessage<'a> {
     pub age: usize,
@@ -35,6 +38,8 @@ pub struct MyMessage<'a> {
     pub name: Cow<'a, str>,
 }
 
+// error type with json error & an arbitrary error type
+// to showcase the requeue logic
 #[derive(Debug, thiserror::Error)]
 pub enum MyMessageConsumerError {
     #[error("failed to parse json: {0}")]
@@ -67,15 +72,17 @@ impl RabbitConsumer for MyMessageConsumer {
             return Err(MyMessageConsumerError::ArbitraryError(msgs_received));
         }
 
-        // let is_borrowed = matches!(msg.name, Cow::Borrowed(_));
+        let is_borrowed = matches!(msg.name, Cow::Borrowed(_));
 
-        // info!("got message #{msgs_received}: {msg:?} - name is borrowed = {is_borrowed} - total processed = {total_msgs_received}");
-        info!("got message #{msgs_received}: {msg:?} - total processed = {total_msgs_received}");
+        info!("got message #{msgs_received}: {msg:?} - name is borrowed = {is_borrowed} - total processed = {total_msgs_received}");
 
         Ok(())
     }
 }
 
+// other consumer state example, everything must manage its
+// synchronisation internally as we only ever get a &self
+// reference to the state
 #[derive(Debug)]
 pub struct OtherMessageConsumer {
     received: AtomicUsize,
