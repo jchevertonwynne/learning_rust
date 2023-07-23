@@ -5,6 +5,7 @@ use std::task::{Context, Poll};
 
 use async_channel::{Receiver, Sender};
 use async_trait::async_trait;
+use futures::future::BoxFuture;
 use futures::StreamExt;
 use lapin::{
     options::{
@@ -307,13 +308,15 @@ async fn worker<D: RabbitDelegator>(
     info!("shutting down worker!")
 }
 
+// A trait for rabbit consumer/delegator errors
+// that decides if a message should be requeued or not
 pub trait ShouldRequeue {
     fn should_requeue(&self) -> Requeue {
         Requeue::No
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Requeue {
     Yes,
     No,
@@ -328,6 +331,9 @@ impl From<Requeue> for bool {
     }
 }
 
+// A trait that represents a consumer of a specific rabbit message_type header
+// defaults to json deserialization, so it's required that the error type
+// supports json errors
 #[async_trait]
 pub trait RabbitConsumer: Sync + Send + 'static {
     const MESSAGE_TYPE_HEADER: &'static str;
@@ -354,24 +360,45 @@ pub trait RabbitConsumer: Sync + Send + 'static {
     }
 }
 
-#[async_trait]
+// RabbitDelegator represents a thing which 'delegates' an incoming message
+// to one of multiple consumers. the macro impls below create delegators of
+// tuples of rabbit consumers & simply checks their headers match
+// before passing it to the appropriate consumer
 pub trait RabbitDelegator: Send + Sync + 'static {
-    async fn delegate(&self, header: &str, contents: Vec<u8>) -> Result<(), Requeue>;
+    fn delegate(&self, header: &str, contents: Vec<u8>) -> DelegateFut;
+}
+
+#[pin_project(project=DelegateFutProj)]
+pub enum DelegateFut<'a> {
+    // we are using `async_trait` on consumers so this is unavoidable
+    Fut(#[pin] BoxFuture<'a, Result<(), Requeue>>),
+    Immediate(Requeue)
+}
+
+impl<'a> Future for DelegateFut<'a> {
+    type Output = Result<(), Requeue>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        match this {
+            DelegateFutProj::Fut(f) => f.poll(cx),
+            DelegateFutProj::Immediate(requeue) => Poll::Ready(Err(*requeue))
+        }
+    }
 }
 
 macro_rules! delegator_tuple {
     ( $ty:tt ) => {
         #[allow(unused_parens)]
-        #[async_trait]
         impl< $ty > RabbitDelegator for $ty
         where
             $ty: RabbitConsumer
         {
-            async fn delegate(&self, header: &str, contents: Vec<u8>) -> Result<(), Requeue> {
+            fn delegate(&self, header: &str, contents: Vec<u8>) -> DelegateFut {
                 if $ty::MESSAGE_TYPE_HEADER == header {
-                    return self.try_process(contents).await;
+                    return DelegateFut::Fut(self.try_process(contents));
                 }
-                Err(Requeue::No)
+                DelegateFut::Immediate(Requeue::No)
             }
         }
 
@@ -381,12 +408,12 @@ macro_rules! delegator_tuple {
         where
             $ty: RabbitConsumer
         {
-            async fn delegate(&self, header: &str, contents: Vec<u8>) -> Result<(), Requeue> {
+            fn delegate(&self, header: &str, contents: Vec<u8>) -> DelegateFut {
                 let (casey::lower!($ty),) = self;
                 if $ty::MESSAGE_TYPE_HEADER == header {
-                    return casey::lower!($ty).try_process(contents).await;
+                    return DelegateFut::Fut(casey::lower!($ty).try_process(contents));
                 }
-                Err(Requeue::No)
+                DelegateFut::Immediate(Requeue::No)
             }
         }
     };
@@ -399,14 +426,14 @@ macro_rules! delegator_tuple {
         where
             $($ty: RabbitConsumer),*
         {
-            async fn delegate(&self, header: &str, contents: Vec<u8>) -> Result<(), Requeue> {
+            fn delegate(&self, header: &str, contents: Vec<u8>) -> DelegateFut {
                 let ($(casey::lower!($ty)),*) = self;
                 $(
                 if $ty::MESSAGE_TYPE_HEADER == header {
-                    return casey::lower!($ty).try_process(contents).await;
+                    return DelegateFut::Fut(casey::lower!($ty).try_process(contents));
                 }
                 )*
-                Err(Requeue::No)
+                DelegateFut::Immediate(Requeue::No)
             }
         }
     }
