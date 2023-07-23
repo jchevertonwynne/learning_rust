@@ -14,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
                 .with_default_directive(LevelFilter::INFO.into())
                 .from_env_lossy(),
         )
-        .with(tracing_subscriber::fmt::layer().with_line_number(true))
+        .with(tracing_subscriber::fmt::layer())
         .try_init()?;
 
     info!("hello!");

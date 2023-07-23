@@ -47,12 +47,6 @@ pub struct Rabbit {
     chan: Channel,
 }
 
-fn ft_default() -> FieldTable {
-    let mut ft = FieldTable::default();
-    ft.insert("x-match".into(), LongString("all".into()));
-    ft
-}
-
 impl Rabbit {
     pub async fn new(address: &str) -> Result<Rabbit, lapin::Error> {
         let connection_properties = ConnectionProperties::default();
@@ -70,7 +64,7 @@ impl Rabbit {
                 EXCHANGE,
                 ExchangeKind::Headers,
                 ExchangeDeclareOptions::default(),
-                ft_default(),
+                FieldTable::default(),
             )
             .await?;
 
@@ -78,7 +72,7 @@ impl Rabbit {
             .queue_declare(
                 QUEUE,
                 QueueDeclareOptions::default(),
-                ft_default(),
+                FieldTable::default(),
             )
             .await?;
 
@@ -88,7 +82,7 @@ impl Rabbit {
                 EXCHANGE,
                 ROUTING,
                 QueueBindOptions::default(),
-                ft_default(),
+                FieldTable::default(),
             )
             .await?;
 
@@ -110,7 +104,7 @@ impl Rabbit {
         body: S,
     ) -> Result<Confirmation, PublishError> {
         let body = serde_json::to_string(&body)?;
-        let mut headers = ft_default();
+        let mut headers = FieldTable::default();
         headers.insert("content-type".into(), LongString("application/json".into()));
         headers.insert("message_type".into(), LongString(message_type.into()));
         self.chan
@@ -142,7 +136,7 @@ impl Rabbit {
                 queue,
                 CONSUMER_TAG,
                 BasicConsumeOptions::default(),
-                ft_default(),
+                FieldTable::default(),
             )
             .await?;
 
@@ -258,7 +252,8 @@ async fn worker<D: RabbitDelegator>(
         // let _entered = span.enter() in async. .instrument allows us
         // to enter & exit from the span's scope when the future is polled, whereas
         // span.enter() would be entered for the entire time the future exists and not
-        // just when it's running
+        // just when it's running. have a look at the Future impl for the Instrumented
+        // type to see how it's doing this
         async {
             let delegate_result = delegator.delegate(&header, contents).await;
 
