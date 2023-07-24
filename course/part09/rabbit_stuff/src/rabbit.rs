@@ -1,13 +1,16 @@
-use std::{fmt::Debug, sync::Arc};
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::{
+    fmt::Debug,
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use async_channel::Receiver;
 use async_trait::async_trait;
-use futures::future::BoxFuture;
-use futures::StreamExt;
+use futures::{future::BoxFuture, StreamExt};
 use lapin::{
+    message::Delivery,
     options::{
         BasicAckOptions,
         BasicConsumeOptions,
@@ -27,13 +30,11 @@ use lapin::{
     Consumer,
     ExchangeKind,
 };
-use lapin::message::Delivery;
 use pin_project::pin_project;
 use serde::{Deserialize, Serialize};
-use tokio::select;
-use tokio::task::JoinHandle;
+use tokio::{select, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, instrument, Instrument, info, info_span};
+use tracing::{error, info, info_span, instrument, Instrument};
 
 pub const QUEUE: &str = "queue-joseph";
 pub const EXCHANGE: &str = "exchange-joseph";
@@ -69,11 +70,7 @@ impl Rabbit {
             .await?;
 
         self.chan
-            .queue_declare(
-                QUEUE,
-                QueueDeclareOptions::default(),
-                FieldTable::default(),
-            )
+            .queue_declare(QUEUE, QueueDeclareOptions::default(), FieldTable::default())
             .await?;
 
         self.chan
@@ -141,7 +138,8 @@ impl Rabbit {
             .await?;
 
         Ok(tokio::spawn(
-            run_consumer(rabbit_delegator, consumer, self.chan.clone(), kill_signal).in_current_span()
+            run_consumer(rabbit_delegator, consumer, self.chan.clone(), kill_signal)
+                .in_current_span(),
         ))
     }
 }
@@ -174,9 +172,7 @@ async fn run_consumer<D: RabbitDelegator>(
             let channel = channel.clone();
             let delegator = Arc::clone(&delegator);
             let receiver = receiver.clone();
-            tokio::spawn(
-                worker(channel, receiver, delegator).instrument(span),
-            )
+            tokio::spawn(worker(channel, receiver, delegator).instrument(span))
         })
         .collect::<Vec<_>>();
 
@@ -200,10 +196,7 @@ async fn run_consumer<D: RabbitDelegator>(
             }
         };
 
-        if let Err(err) = sender
-            .send(delivery)
-            .await
-        {
+        if let Err(err) = sender.send(delivery).await {
             error!("rabbit consumer failed to send message: {err}");
             break;
         }
@@ -220,13 +213,12 @@ async fn run_consumer<D: RabbitDelegator>(
     }
 }
 
-
 // a worker is responsible for processing a lapin::message::Delivery
 // via the delegator
 async fn worker<D: RabbitDelegator>(
     channel: Channel,
     mut receiver: Receiver<Delivery>,
-    delegator: Arc<D>
+    delegator: Arc<D>,
 ) {
     // consumes from channel whilst it's not closed
     while let Some(delivery) = receiver.next().await {
@@ -285,7 +277,9 @@ async fn worker<D: RabbitDelegator>(
                     }
                 }
             }
-        }.instrument(span).await;
+        }
+        .instrument(span)
+        .await;
     }
 
     info!("shutting down worker!")
@@ -329,10 +323,9 @@ pub trait RabbitConsumer: Sync + Send + 'static {
     async fn process(&self, msg: Self::Message<'_>) -> Result<(), Self::ConsumerError>;
 
     async fn try_process(&self, contents: Vec<u8>) -> Result<(), Box<dyn RequeueableError>> {
-        self.try_process_inner(contents).await.map_err(|err| {
-            error!("failed to process message: {}", err);
-            Box::new(err) as Box<dyn RequeueableError>
-        })
+        self.try_process_inner(contents)
+            .await
+            .map_err(|err| Box::new(err) as Box<dyn RequeueableError>)
     }
 
     async fn try_process_inner(&self, contents: Vec<u8>) -> Result<(), Self::ConsumerError> {
@@ -353,22 +346,8 @@ pub trait RabbitDelegator: Send + Sync + 'static {
 pub enum DelegateFut<'a> {
     // we are using `async_trait` on consumers so this is unavoidable
     ConsumerFut(#[pin] BoxFuture<'a, Result<(), Box<dyn RequeueableError>>>),
-    NoHeaderMatch
+    NoHeaderMatch,
 }
-
-#[derive(thiserror::Error, Debug)]
-#[error("delegator was unable to match the message-type header")]
-struct NoHeaderMatch;
-
-// if the headers didnt match now, they never will so default ShouldRequeue::No is fine
-impl ShouldRequeue for NoHeaderMatch {}
-
-// a trait for all consumer errors, needed for the Box<dyn>
-// as that can only contain 1 trait + any auto traits
-pub trait RequeueableError: std::error::Error + ShouldRequeue + Send {}
-
-// automatically implement for all appropriate types, no need to do it manually!
-impl<T> RequeueableError for T where T: std::error::Error + ShouldRequeue + Send {}
 
 // DelegateFut returns a type erased error object, similar to the error
 // interface in go. we do this because we could have any number of errors
@@ -381,10 +360,24 @@ impl<'a> Future for DelegateFut<'a> {
         let this = self.project();
         match this {
             DelegateFutProj::ConsumerFut(f) => f.poll(cx),
-            DelegateFutProj::NoHeaderMatch => Poll::Ready(Err(Box::new(NoHeaderMatch)))
+            DelegateFutProj::NoHeaderMatch => Poll::Ready(Err(Box::new(NoHeaderMatch))),
         }
     }
 }
+
+// a trait for all consumer errors, needed for the Box<dyn>
+// as that can only contain 1 trait + any auto traits
+pub trait RequeueableError: std::error::Error + ShouldRequeue + Send {}
+
+// automatically implement for all appropriate types, no need to do it manually!
+impl<T> RequeueableError for T where T: std::error::Error + ShouldRequeue + Send {}
+
+#[derive(thiserror::Error, Debug)]
+#[error("delegator was unable to match the message-type header")]
+struct NoHeaderMatch;
+
+// if the headers didnt match now, they never will so default ShouldRequeue::No is fine
+impl ShouldRequeue for NoHeaderMatch {}
 
 macro_rules! delegator_tuple {
     ( $ty:tt ) => {
@@ -400,7 +393,6 @@ macro_rules! delegator_tuple {
             }
         }
 
-        #[async_trait]
         impl< $ty > RabbitDelegator for ($ty,)
         where
             $ty: RabbitConsumer
@@ -415,7 +407,6 @@ macro_rules! delegator_tuple {
         }
     };
     ( $($ty:tt),* ) => {
-        #[async_trait]
         impl< $($ty),* > RabbitDelegator for (
             $($ty),*
         )
