@@ -311,24 +311,30 @@ impl From<Requeue> for bool {
 // A trait that represents a consumer of a specific rabbit message_type header
 #[async_trait]
 pub trait RabbitConsumer: Sync + Send + 'static {
+    // static str as this should be compile time known
     const MESSAGE_TYPE_HEADER: &'static str;
 
+    // since a message only exists in this scope we can put a lifetime on it
+    // to allow borrowing from the rabbit msg body, resulting in less copies
     type Message<'a>: Deserialize<'a> + Send;
+    // there is no lifetime on the error as we wan to propagate this up
     type ConsumerError: RequeueableError + From<serde_json::Error>;
 
+    // defaults to a json deserialize, hence the From<serde_json::Error> requirement above
     fn parse_msg<'a>(&self, contents: &'a [u8]) -> Result<Self::Message<'a>, Self::ConsumerError> {
         serde_json::from_slice(contents).map_err(Into::into)
     }
 
     async fn process(&self, msg: Self::Message<'_>) -> Result<(), Self::ConsumerError>;
 
+    // attempts to parse & process the message, returns a boxed error on failure
     async fn try_process(&self, contents: Vec<u8>) -> Result<(), Box<dyn RequeueableError>> {
-        self.try_process_inner(contents)
+        self._try_process(contents)
             .await
             .map_err(|err| Box::new(err) as Box<dyn RequeueableError>)
     }
 
-    async fn try_process_inner(&self, contents: Vec<u8>) -> Result<(), Self::ConsumerError> {
+    async fn _try_process(&self, contents: Vec<u8>) -> Result<(), Self::ConsumerError> {
         let message = self.parse_msg(&contents)?;
         self.process(message).await
     }
@@ -428,6 +434,24 @@ macro_rules! delegator_tuple {
 
 // delegator implementations for a single RabbitConsumer and
 // tuples of size 1 to 10 of RabbitConsumers
+// expands to something like this:
+//
+// impl<A, B> RabbitDelegator for (A, B)
+// where
+//     A: RabbitConsumer,
+//     B: RabbitConsumer,
+// {
+//     fn delegate(&self, header: &str, contents: Vec<u8>) -> DelegateFut {
+//         let (a, b) = self;
+//         if A::MESSAGE_TYPE_HEADER == header {
+//             return DelegateFut::ConsumerFut(a.try_process(contents));
+//         }
+//         if B::MESSAGE_TYPE_HEADER == header {
+//             return DelegateFut::ConsumerFut(b.try_process(contents));
+//         }
+//         DelegateFut::NoHeaderMatch
+//     }
+// }
 delegator_tuple!(A);
 delegator_tuple!(A, B);
 delegator_tuple!(A, B, C);
