@@ -3,9 +3,22 @@ use hyper::{body::HttpBody, Client, Uri};
 use reqwest::header::ACCEPT_ENCODING;
 use tower::{Service, ServiceExt};
 use tower_http::decompression::Decompression;
+use tracing::{info, level_filters::LevelFilter};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    Registry::default()
+        .with(
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::INFO.into())
+                .from_env_lossy(),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .try_init()?;
+
+    info!("hello!");
+
     let mut client = Decompression::new(Client::new());
 
     client.ready().await?;
@@ -24,8 +37,10 @@ async fn main() -> anyhow::Result<()> {
             s.push_str(std::str::from_utf8(bytes.as_ref())?);
         }
 
-        println!("body has len {l}", l = s.len());
+        info!("body has len {l}", l = s.len());
     }
+
+    info!("goodbye!");
 
     Ok(())
 }
