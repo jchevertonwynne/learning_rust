@@ -8,10 +8,8 @@ use std::{
     task::{Context, Poll},
 };
 
-use axum::{
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
+use axum::response::{IntoResponse, Response};
+use http::StatusCode;
 use pin_project::pin_project;
 use tower::{Layer, Service};
 
