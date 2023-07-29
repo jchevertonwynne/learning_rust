@@ -13,9 +13,15 @@ use std::{
 use axum::{
     body::Body,
     extract::{Path, State},
-    http::{Request, StatusCode},
+    http::{
+        header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE},
+        HeaderMap,
+        HeaderValue,
+        Request,
+        StatusCode,
+    },
     middleware::Next,
-    response::{IntoResponse, Response},
+    response::{AppendHeaders, IntoResponse, Response},
     routing::get,
     Json,
     Router,
@@ -25,6 +31,7 @@ use futures::FutureExt;
 use pin_project::pin_project;
 use serde::{Deserialize, Serialize};
 use tower::{Layer, Service};
+use tower_http::compression::{CompressionLayer, DefaultPredicate};
 use tracing::{info, level_filters::LevelFilter};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry};
 
@@ -44,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
     let numbers_sub_router = Router::new()
         .route("/1", get(|| async { "one" }))
         .route("/2", get(|| async { (StatusCode::CREATED, "two") }))
-        .route("/divide", get(divide))
+        .route("/divide", get(divide).layer(tower_http::catch_panic::CatchPanicLayer::new()))
         .route("/divide2", get(divide2))
         .route(
             "/:num",
@@ -52,10 +59,14 @@ async fn main() -> anyhow::Result<()> {
         )
         .layer(EveryOtherRequestLayer::default());
 
-    let a_sub_router = Router::new().route(
-        "/:b",
-        get(|Path((a, b)): Path<(String, String)>| async move { format!("reversed: /{b}/{a}") }),
-    );
+    let a_sub_router = Router::new()
+        .route(
+            "/:b",
+            get(|Path((a, b)): Path<(String, String)>| async move {
+                format!("reversed: /{b}/{a}", b = b.repeat(100), a = a.repeat(100))
+            }),
+        )
+        .layer(CompressionLayer::<DefaultPredicate>::default());
 
     // let flip_flop_layer =
     //     axum::middleware::from_fn_with_state(Arc::new(AtomicBool::new(false)), flip_flop);
