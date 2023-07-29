@@ -1,5 +1,6 @@
 use std::{
     convert::Infallible,
+    fmt::Debug,
     future::Future,
     net::{SocketAddr, TcpListener},
     pin::Pin,
@@ -7,33 +8,37 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
-    task::{Context, Poll},
+    task::{ready, Context, Poll},
+    time::Duration,
 };
 
 use axum::{
-    body::Body,
     extract::{Path, State},
-    http::{
-        header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_TYPE},
-        HeaderMap,
-        HeaderValue,
-        Request,
-        StatusCode,
-    },
+    http::{Request, StatusCode},
     middleware::Next,
-    response::{AppendHeaders, IntoResponse, Response},
+    response::{IntoResponse, Response},
     routing::get,
     Json,
     Router,
     Server,
 };
 use futures::FutureExt;
+use hyper::server::conn::AddrStream;
 use pin_project::pin_project;
 use serde::{Deserialize, Serialize};
-use tower::{Layer, Service};
-use tower_http::compression::{CompressionLayer, DefaultPredicate};
-use tracing::{info, level_filters::LevelFilter};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry};
+use tower::{Layer, Service, ServiceBuilder};
+use tower_http::{
+    compression::{CompressionLayer, DefaultPredicate},
+    trace::{DefaultMakeSpan, TraceLayer},
+};
+use tracing::{info, info_span, level_filters::LevelFilter, Span};
+use tracing_subscriber::{
+    fmt::layer,
+    layer::SubscriberExt,
+    util::SubscriberInitExt,
+    EnvFilter,
+    Registry,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -51,7 +56,10 @@ async fn main() -> anyhow::Result<()> {
     let numbers_sub_router = Router::new()
         .route("/1", get(|| async { "one" }))
         .route("/2", get(|| async { (StatusCode::CREATED, "two") }))
-        .route("/divide", get(divide).layer(tower_http::catch_panic::CatchPanicLayer::new()))
+        .route(
+            "/divide",
+            get(divide).layer(tower_http::catch_panic::CatchPanicLayer::new()),
+        )
         .route("/divide2", get(divide2))
         .route(
             "/:num",
@@ -63,13 +71,15 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/:b",
             get(|Path((a, b)): Path<(String, String)>| async move {
-                format!("reversed: /{b}/{a}", b = b.repeat(100), a = a.repeat(100))
+                info!("hit the long url endpoint!");
+                format!(
+                    "if this url was 100 times longer and reversed: /{b}/{a}",
+                    b = b.repeat(100),
+                    a = a.repeat(100)
+                )
             }),
         )
         .layer(CompressionLayer::<DefaultPredicate>::default());
-
-    // let flip_flop_layer =
-    //     axum::middleware::from_fn_with_state(Arc::new(AtomicBool::new(false)), flip_flop);
 
     let router = Router::new()
         .route(
@@ -78,19 +88,37 @@ async fn main() -> anyhow::Result<()> {
                 .post(world)
                 .layer(EveryOtherRequestLayer::default()),
         )
-        .route("/world", get(world))
+        .route(
+            "/world",
+            get(world).layer(axum::middleware::from_fn_with_state(
+                Arc::new(AtomicBool::new(false)),
+                flip_flop,
+            )),
+        )
         .nest("/:a", a_sub_router)
         .nest("/numbers", numbers_sub_router)
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
+                .on_response(|_response: &Response, duration: Duration, _span: &Span| {
+                    info!("request took {:?} to complete", duration);
+                }),
+        )
         .with_state(Arc::new(AtomicUsize::default()));
-    // .layer(EveryOtherRequestLayer::default())
-    // .layer(flip_flop_layer);
+    // .layer(axum::middleware::from_fn_with_state(Arc::new(AtomicBool::new(false)), flip_flop));
 
     let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 25565)))?;
 
     let shutdown = tokio::signal::ctrl_c().map(|_| ());
 
     let server = Server::from_tcp(listener)?
-        .serve(router.into_make_service())
+        .serve(
+            ServiceBuilder::new()
+                .layer(NewConnTraceLayer {})
+                // .concurrency_limit(5)
+                .rate_limit(1, Duration::from_secs(5))
+                .service(router.into_make_service()),
+        )
         .with_graceful_shutdown(shutdown);
 
     server.await?;
@@ -100,12 +128,131 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+struct NewConnTraceLayer {}
+
+impl<S> Layer<S> for NewConnTraceLayer {
+    type Service = NewConnTraceService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        NewConnTraceService { inner }
+    }
+}
+
+struct NewConnTraceService<S> {
+    inner: S,
+}
+
+impl<'a, S> Service<&'a AddrStream> for NewConnTraceService<S>
+where
+    S: Service<&'a AddrStream>,
+{
+    type Response = TracedService<S::Response>;
+    type Error = S::Error;
+    type Future = NewConnTraceFut<S::Future>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        info!("SERVICE POLL: checking if ready to make a new connection");
+        let poll = self.inner.poll_ready(cx);
+        if poll.is_ready() {
+            info!("SERVICE POLL: ready!");
+        } else {
+            info!("SERVICE POLL: waiting...");
+        }
+        poll
+    }
+
+    fn call(&mut self, req: &'a AddrStream) -> Self::Future {
+        info!(
+            "SERVICE CALL: creating a new connection to {addr}",
+            addr = req.remote_addr()
+        );
+        let span = info_span!("connection", addr=?req.remote_addr());
+        NewConnTraceFut {
+            span,
+            fut: self.inner.call(req),
+        }
+    }
+}
+
+#[pin_project]
+struct NewConnTraceFut<F> {
+    span: Span,
+    #[pin]
+    fut: F,
+}
+
+impl<F, A, B> Future for NewConnTraceFut<F>
+where
+    F: Future<Output = Result<A, B>>,
+{
+    type Output = Result<TracedService<A>, B>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        let _entered = this.span.enter();
+        info!("SERVICE FUTURE: polling to create a new service...");
+        let rdy = ready!(this.fut.poll(cx));
+        info!("SERVICE FUTURE: created a new connection");
+        Poll::Ready(rdy.map(|inner| TracedService {
+            span: this.span.clone(),
+            inner,
+        }))
+    }
+}
+
+struct TracedService<S> {
+    span: Span,
+    inner: S,
+}
+
+impl<S, I> Service<I> for TracedService<S>
+where
+    S: Service<I>,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = TracedServiceFut<S::Future>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        let _entered = self.span.enter();
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: I) -> Self::Future {
+        let _entered = self.span.enter();
+        TracedServiceFut {
+            span: self.span.clone(),
+            fut: self.inner.call(req),
+        }
+    }
+}
+
+#[pin_project]
+struct TracedServiceFut<F> {
+    span: Span,
+    #[pin]
+    fut: F,
+}
+
+impl<F> Future for TracedServiceFut<F>
+where
+    F: Future,
+{
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        let _entered = this.span.enter();
+        this.fut.poll(cx)
+    }
+}
+
 async fn flip_flop<B>(
-    State(state): State<Arc<AtomicBool>>,
+    State(flipper): State<Arc<AtomicBool>>,
     request: Request<B>,
     next: Next<B>,
 ) -> Response {
-    if state.fetch_xor(true, Ordering::Relaxed) {
+    if flipper.fetch_xor(true, Ordering::Relaxed) {
         StatusCode::FORBIDDEN.into_response()
     } else {
         next.run(request).await
