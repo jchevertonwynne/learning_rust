@@ -7,19 +7,11 @@ use axum::Server;
 use axum_stuff::{routers::main_router, tower_stuff::NewConnTraceLayer};
 use futures::FutureExt;
 use tower::ServiceBuilder;
-use tracing::{info, level_filters::LevelFilter};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry};
+use tracing::info;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    Registry::default()
-        .with(
-            EnvFilter::builder()
-                .with_default_directive(LevelFilter::INFO.into())
-                .from_env_lossy(),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .try_init()?;
+    axum_stuff::tracing_init::init()?;
 
     info!("hello!");
 
