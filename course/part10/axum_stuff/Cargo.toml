@@ -12,6 +12,7 @@ axum-extra = { version = "0.7.5", features = ["typed-routing"] }
 flate2 = "1.0.26"
 futures = "0.3.28"
 http = "0.2.9"
+http-body-util = "0.1.0-rc.3"
 hyper = { version = "0.14.27", features = ["full"] }
 pin-project = "1.1.2"
 reqwest = "0.11.18"

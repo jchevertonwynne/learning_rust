@@ -7,7 +7,7 @@ use std::{
 use hyper::server::conn::AddrStream;
 use pin_project::pin_project;
 use tower::{Layer, Service};
-use tracing::{info, info_span, Span};
+use tracing::{debug, info_span, Span};
 
 #[derive(Debug)]
 pub struct NewConnSpanMakeServiceLayer;
@@ -33,18 +33,18 @@ where
     type Future = NewConnSpanFut<S::Future>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        info!("SERVICE POLL: checking if ready to make a new connection");
+        debug!("SERVICE POLL: checking if ready to make a new connection");
         let poll = self.inner.poll_ready(cx);
         if poll.is_ready() {
-            info!("SERVICE POLL: ready!");
+            debug!("SERVICE POLL: ready!");
         } else {
-            info!("SERVICE POLL: waiting...");
+            debug!("SERVICE POLL: waiting...");
         }
         poll
     }
 
     fn call(&mut self, req: &'a AddrStream) -> Self::Future {
-        info!(
+        debug!(
             "SERVICE CALL: creating a new connection to {addr}",
             addr = req.remote_addr()
         );
@@ -72,9 +72,9 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         let _entered = this.span.enter();
-        info!("SERVICE FUTURE: polling to create a new service...");
+        debug!("SERVICE FUTURE: polling to create a new service...");
         let rdy = ready!(this.fut.poll(cx));
-        info!("SERVICE FUTURE: created a new connection");
+        debug!("SERVICE FUTURE: created a new connection");
         Poll::Ready(rdy.map(|inner| SpannedService {
             span: this.span.clone(),
             inner,

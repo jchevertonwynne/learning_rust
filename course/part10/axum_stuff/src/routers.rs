@@ -25,8 +25,6 @@ use tower_http::{
 };
 use tracing::{info, Span};
 
-use crate::tower_stuff::EveryOtherRequestLayer;
-
 pub fn main_router<S, B>() -> Router<S, B>
 where
     S: Clone + Send + Sync + 'static,
@@ -35,10 +33,12 @@ where
     <B as HttpBody>::Error: std::error::Error + Send + Sync,
 {
     Router::new()
+        // curl localhost:25565/hello
         .route(
             "/hello",
             get(hello).post(world), // .layer(EveryOtherRequestLayer::default()),
         )
+        // curl localhost:25565/world
         .route(
             "/world",
             get(world).layer(axum::middleware::from_fn_with_state(
@@ -55,7 +55,7 @@ where
                     info!("request took {:?} to complete", duration);
                 }),
         )
-        .layer(GlobalConcurrencyLimitLayer::new(20))
+        .layer(GlobalConcurrencyLimitLayer::new(100))
         .with_state(Arc::new(AtomicUsize::default()))
 }
 
@@ -67,17 +67,22 @@ where
     <B as HttpBody>::Error: std::error::Error + Send + Sync,
 {
     Router::new()
+        // curl localhost:25565/numbers/1
         .route("/1", get(|| async { "one" }))
+        // curl localhost:25565/numbers/2
         .route("/2", get(|| async { (StatusCode::CREATED, "two") }))
+        // curl localhost:25565/numbers/5
         .typed_get(|NumbersPath { number }: NumbersPath| async move {
             format!("dynamic number: {number}")
         })
+        // curl -v localhost:25565/numbers/divide -X GET --json '{"numerator": 13, "denominator": 5}'
         .route(
             "/divide",
             get(divide).layer(tower_http::catch_panic::CatchPanicLayer::new()),
         )
+        // curl -v localhost:25565/numbers/divide2 -X GET --json '{"numerator": 13, "denominator": 5}'
         .route("/divide2", get(divide2))
-        .layer(EveryOtherRequestLayer::default())
+    // .layer(EveryOtherRequestLayer::default())
 }
 
 #[derive(Debug, TypedPath, Deserialize)]
@@ -94,6 +99,7 @@ where
     <B as HttpBody>::Error: std::error::Error + Send + Sync,
 {
     Router::new()
+        // curl -v localhost:25565/swap/please
         .route(
             "/:b",
             get(|Path((a, b)): Path<(String, String)>| async move {
@@ -109,9 +115,9 @@ where
 }
 
 async fn hello(State(counter): State<Arc<AtomicUsize>>) -> Response {
-    tokio::time::sleep(Duration::from_millis(100)).await;
     let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
     info!("hello endpoint has been hit - {count}");
+    tokio::time::sleep(Duration::from_millis(200)).await;
     "hello world".into_response()
 }
 
