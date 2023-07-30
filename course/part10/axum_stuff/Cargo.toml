@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.72"
 axum = "0.6.19"
+axum-extra = { version = "0.7.5", features = ["typed-routing"] }
 flate2 = "1.0.26"
 futures = "0.3.28"
 http = "0.2.9"

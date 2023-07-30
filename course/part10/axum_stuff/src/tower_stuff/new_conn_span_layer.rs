@@ -10,9 +10,9 @@ use tower::{Layer, Service};
 use tracing::{info, info_span, Span};
 
 #[derive(Debug)]
-pub struct NewConnSpanLayer;
+pub struct NewConnSpanMakeServiceLayer;
 
-impl<S> Layer<S> for NewConnSpanLayer {
+impl<S> Layer<S> for NewConnSpanMakeServiceLayer {
     type Service = NewConnSpanMakeService<S>;
 
     fn layer(&self, inner: S) -> Self::Service {

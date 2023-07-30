@@ -16,6 +16,7 @@ use axum::{
     Json,
     Router,
 };
+use axum_extra::routing::{RouterExt, TypedPath};
 use serde::{Deserialize, Serialize};
 use tower::limit::GlobalConcurrencyLimitLayer;
 use tower_http::{
@@ -36,9 +37,7 @@ where
     Router::new()
         .route(
             "/hello",
-            get(hello)
-                .post(world)
-                .layer(EveryOtherRequestLayer::default()),
+            get(hello).post(world), // .layer(EveryOtherRequestLayer::default()),
         )
         .route(
             "/world",
@@ -56,7 +55,7 @@ where
                     info!("request took {:?} to complete", duration);
                 }),
         )
-        .layer(GlobalConcurrencyLimitLayer::new(5))
+        .layer(GlobalConcurrencyLimitLayer::new(20))
         .with_state(Arc::new(AtomicUsize::default()))
 }
 
@@ -70,16 +69,21 @@ where
     Router::new()
         .route("/1", get(|| async { "one" }))
         .route("/2", get(|| async { (StatusCode::CREATED, "two") }))
+        .typed_get(|NumbersPath { number }: NumbersPath| async move {
+            format!("dynamic number: {number}")
+        })
         .route(
             "/divide",
             get(divide).layer(tower_http::catch_panic::CatchPanicLayer::new()),
         )
         .route("/divide2", get(divide2))
-        .route(
-            "/:num",
-            get(|Path(number): Path<usize>| async move { format!("dynamic number: {number}") }),
-        )
         .layer(EveryOtherRequestLayer::default())
+}
+
+#[derive(Debug, TypedPath, Deserialize)]
+#[typed_path("/:number")]
+struct NumbersPath {
+    number: usize,
 }
 
 fn a_path_subrouter<S, B>() -> Router<S, B>
@@ -105,6 +109,7 @@ where
 }
 
 async fn hello(State(counter): State<Arc<AtomicUsize>>) -> Response {
+    tokio::time::sleep(Duration::from_millis(100)).await;
     let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
     info!("hello endpoint has been hit - {count}");
     "hello world".into_response()
