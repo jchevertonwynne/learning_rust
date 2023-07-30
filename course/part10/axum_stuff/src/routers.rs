@@ -17,6 +17,7 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
+use tower::limit::GlobalConcurrencyLimitLayer;
 use tower_http::{
     compression::{CompressionLayer, DefaultPredicate},
     trace::{DefaultMakeSpan, TraceLayer},
@@ -55,6 +56,7 @@ where
                     info!("request took {:?} to complete", duration);
                 }),
         )
+        .layer(GlobalConcurrencyLimitLayer::new(5))
         .with_state(Arc::new(AtomicUsize::default()))
 }
 

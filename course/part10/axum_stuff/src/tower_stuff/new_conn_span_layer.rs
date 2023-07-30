@@ -9,28 +9,28 @@ use pin_project::pin_project;
 use tower::{Layer, Service};
 use tracing::{info, info_span, Span};
 
-#[derive(Debug, Default)]
-pub struct NewConnTraceLayer {}
+#[derive(Debug)]
+pub struct NewConnSpanLayer;
 
-impl<S> Layer<S> for NewConnTraceLayer {
-    type Service = NewConnTraceService<S>;
+impl<S> Layer<S> for NewConnSpanLayer {
+    type Service = NewConnSpanMakeService<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        NewConnTraceService { inner }
+        NewConnSpanMakeService { inner }
     }
 }
 
-pub struct NewConnTraceService<S> {
+pub struct NewConnSpanMakeService<S> {
     inner: S,
 }
 
-impl<'a, S> Service<&'a AddrStream> for NewConnTraceService<S>
+impl<'a, S> Service<&'a AddrStream> for NewConnSpanMakeService<S>
 where
     S: Service<&'a AddrStream>,
 {
-    type Response = TracedService<S::Response>;
+    type Response = SpannedService<S::Response>;
     type Error = S::Error;
-    type Future = NewConnTraceFut<S::Future>;
+    type Future = NewConnSpanFut<S::Future>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         info!("SERVICE POLL: checking if ready to make a new connection");
@@ -49,7 +49,7 @@ where
             addr = req.remote_addr()
         );
         let span = info_span!("connection", addr=?req.remote_addr());
-        NewConnTraceFut {
+        NewConnSpanFut {
             span,
             fut: self.inner.call(req),
         }
@@ -57,17 +57,17 @@ where
 }
 
 #[pin_project]
-pub struct NewConnTraceFut<F> {
+pub struct NewConnSpanFut<F> {
     span: Span,
     #[pin]
     fut: F,
 }
 
-impl<F, A, B> Future for NewConnTraceFut<F>
+impl<F, T, E> Future for NewConnSpanFut<F>
 where
-    F: Future<Output = Result<A, B>>,
+    F: Future<Output = Result<T, E>>,
 {
-    type Output = Result<TracedService<A>, B>;
+    type Output = Result<SpannedService<T>, E>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
@@ -75,25 +75,25 @@ where
         info!("SERVICE FUTURE: polling to create a new service...");
         let rdy = ready!(this.fut.poll(cx));
         info!("SERVICE FUTURE: created a new connection");
-        Poll::Ready(rdy.map(|inner| TracedService {
+        Poll::Ready(rdy.map(|inner| SpannedService {
             span: this.span.clone(),
             inner,
         }))
     }
 }
 
-pub struct TracedService<S> {
+pub struct SpannedService<S> {
     span: Span,
     inner: S,
 }
 
-impl<S, I> Service<I> for TracedService<S>
+impl<S, I> Service<I> for SpannedService<S>
 where
     S: Service<I>,
 {
     type Response = S::Response;
     type Error = S::Error;
-    type Future = TracedServiceFut<S::Future>;
+    type Future = SpannedServiceFut<S::Future>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         let _entered = self.span.enter();
@@ -102,7 +102,7 @@ where
 
     fn call(&mut self, req: I) -> Self::Future {
         let _entered = self.span.enter();
-        TracedServiceFut {
+        SpannedServiceFut {
             span: self.span.clone(),
             fut: self.inner.call(req),
         }
@@ -110,13 +110,13 @@ where
 }
 
 #[pin_project]
-pub struct TracedServiceFut<F> {
+pub struct SpannedServiceFut<F> {
     span: Span,
     #[pin]
     fut: F,
 }
 
-impl<F> Future for TracedServiceFut<F>
+impl<F> Future for SpannedServiceFut<F>
 where
     F: Future,
 {

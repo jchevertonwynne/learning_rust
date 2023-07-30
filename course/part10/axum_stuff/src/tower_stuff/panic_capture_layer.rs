@@ -10,7 +10,7 @@ use http::StatusCode;
 use pin_project::pin_project;
 use tower::{Layer, Service};
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct PanicCaptureLayer;
 
 impl<S> Layer<S> for PanicCaptureLayer {

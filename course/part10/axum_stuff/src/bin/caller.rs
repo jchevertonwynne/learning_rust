@@ -7,7 +7,7 @@ use tracing::info;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    axum_stuff::tracing_init::init()?;
+    axum_stuff::tracing_config::init()?;
 
     info!("hello!");
 
