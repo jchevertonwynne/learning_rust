@@ -1,7 +1,7 @@
 use axum::http::HeaderValue;
-use hyper::{body::HttpBody, Client, Uri};
+use hyper::{Body, Client, Request, Uri};
 use reqwest::header::ACCEPT_ENCODING;
-use tower::{Service, ServiceExt};
+use tower::Service;
 use tower_http::decompression::Decompression;
 use tracing::info;
 
@@ -11,25 +11,30 @@ async fn main() -> anyhow::Result<()> {
 
     info!("hello!");
 
-    let mut client = Decompression::new(Client::new());
+    let http_client = Client::new();
 
-    client.ready().await?;
+    let mut compression_client = tower::service_fn(|mut request: Request<_>| async {
+        request.headers_mut().insert(
+            ACCEPT_ENCODING,
+            HeaderValue::from_str("gzip").expect("was ascii string"),
+        );
+        Decompression::new(&http_client).call(request).await
+    });
 
     for _ in 0..2 {
-        let request = hyper::Request::builder()
-            .header(ACCEPT_ENCODING, HeaderValue::from_str("gzip")?)
+        let request = Request::builder()
             .uri("http://localhost:25565/yolo/swag".parse::<Uri>()?)
-            .body(hyper::Body::empty())?;
+            .body(Body::empty())?;
 
-        let mut resp = client.call(request).await?;
+        let resp = compression_client.call(request).await?;
 
-        let mut s = String::new();
-        while let Some(d) = resp.body_mut().data().await {
-            let bytes = d.map_err(|e| anyhow::anyhow!(e))?;
-            s.push_str(std::str::from_utf8(bytes.as_ref())?);
-        }
+        let (_, body) = resp.into_parts();
 
-        info!("body has len {l}", l = s.len());
+        let body = hyper::body::to_bytes(body)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
+
+        info!("body has len {l}", l = body.len());
     }
 
     info!("goodbye!");
