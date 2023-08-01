@@ -4,7 +4,10 @@ use std::{
 };
 
 use axum::Server;
-use axum_stuff::{routers::main_router, tower_stuff::NewConnSpanMakeServiceLayer};
+use axum_stuff::{
+    routers::main_router,
+    tower_stuff::{ConnectionLimitLayer, NewConnSpanMakeServiceLayer},
+};
 use futures::FutureExt;
 use tower::ServiceBuilder;
 use tracing::info;
@@ -20,10 +23,10 @@ async fn main() -> anyhow::Result<()> {
         .serve(
             // main_router().into_make_service(),
             ServiceBuilder::new()
-                .layer(NewConnSpanMakeServiceLayer)
                 // .load_shed()
-                // .concurrency_limit(5)
-                // .rate_limit(50, Duration::from_millis(100))
+                .rate_limit(1, Duration::from_secs(1))
+                .layer(ConnectionLimitLayer::new(10))
+                .layer(NewConnSpanMakeServiceLayer)
                 .service(main_router().into_make_service()),
         )
         .with_graceful_shutdown(tokio::signal::ctrl_c().map(|_| ()));

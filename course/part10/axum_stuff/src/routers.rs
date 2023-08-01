@@ -8,6 +8,7 @@ use std::{
 
 use axum::{
     body::HttpBody,
+    error_handling::HandleErrorLayer,
     extract::{Path, State},
     http::{Request, StatusCode},
     middleware::Next,
@@ -18,7 +19,12 @@ use axum::{
 };
 use axum_extra::routing::{RouterExt, TypedPath};
 use serde::{Deserialize, Serialize};
-use tower::limit::GlobalConcurrencyLimitLayer;
+use tower::{
+    limit::GlobalConcurrencyLimitLayer,
+    load_shed::LoadShedLayer,
+    BoxError,
+    ServiceBuilder,
+};
 use tower_http::{
     compression::{CompressionLayer, DefaultPredicate},
     trace::{DefaultMakeSpan, TraceLayer},
@@ -49,16 +55,22 @@ where
         .nest("/:a", a_path_subrouter())
         .nest("/numbers", numbers_subrouter())
         .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
-                .on_response(|_response: &Response, duration: Duration, _span: &Span| {
-                    info!("request took {:?} to complete", duration);
-                }),
+            ServiceBuilder::new()
+                .layer(HandleErrorLayer::new(|err: BoxError| async move {
+                    (StatusCode::SERVICE_UNAVAILABLE, err.to_string())
+                }))
+                .layer(LoadShedLayer::new())
+                .layer(GlobalConcurrencyLimitLayer::new(100))
+                .layer(
+                    TraceLayer::new_for_http()
+                        .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
+                        .on_response(|_response: &Response, duration: Duration, _span: &Span| {
+                            info!("request took {:?} to complete", duration);
+                        }),
+                ),
         )
-        .layer(GlobalConcurrencyLimitLayer::new(100))
         .with_state(Arc::new(AtomicUsize::default()))
 }
-
 fn numbers_subrouter<S, B>() -> Router<S, B>
 where
     S: Clone + Send + Sync + 'static,
@@ -117,7 +129,7 @@ where
 async fn hello(State(counter): State<Arc<AtomicUsize>>) -> Response {
     let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
     info!("hello endpoint has been hit - {count}");
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
     "hello world".into_response()
 }
 
