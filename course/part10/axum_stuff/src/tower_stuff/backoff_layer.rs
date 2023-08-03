@@ -1,4 +1,3 @@
-use http::Request;
 use std::{
     future::{ready, Future, Ready},
     pin::Pin,
@@ -6,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use http::Request;
 use pin_project::pin_project;
 use tokio::time::Sleep;
 use tower::{
@@ -67,7 +67,7 @@ where
     }
 
     fn call(&mut self, req: Request<Req>) -> Self::Future {
-        self.inner.call(Backoff { repeats: 0, req })
+        self.inner.call(Backoff { calls: 0, req })
     }
 }
 
@@ -91,11 +91,17 @@ where
     }
 
     fn call(&mut self, req: Backoff<Req>) -> Self::Future {
-        let Backoff { repeats, req } = req;
+        let Backoff {
+            calls: repeats,
+            req,
+        } = req;
         let backoff = self.backoff.backoff_duration(repeats);
-        info!("this call will backoff for {backoff:?}");
+        let is_first_call = repeats == 0;
+        if !is_first_call {
+            info!("this call will backoff for {backoff:?}");
+        }
         BackoffFut {
-            slept: false,
+            slept: is_first_call,
             sleep: tokio::time::sleep(backoff),
             fut: self.inner.call(req),
         }
@@ -149,16 +155,16 @@ where
     }
 
     fn clone_request(&self, req: &Backoff<Req>) -> Option<Backoff<Req>> {
-        let Backoff { repeats, req } = req;
+        let Backoff { calls, req } = req;
         self.inner.clone_request(req).map(|req| Backoff {
-            repeats: repeats + 1,
+            calls: calls + 1,
             req,
         })
     }
 }
 
 pub struct Backoff<R> {
-    repeats: u32,
+    calls: u32,
     req: R,
 }
 

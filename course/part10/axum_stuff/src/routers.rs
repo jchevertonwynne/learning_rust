@@ -60,8 +60,7 @@ where
                     (StatusCode::SERVICE_UNAVAILABLE, err.to_string())
                 }))
                 .layer(LoadShedLayer::new())
-                .layer(GlobalConcurrencyLimitLayer::new(1))
-                // .rate_limit(1, Duration::from_secs(1))
+                .layer(GlobalConcurrencyLimitLayer::new(10))
                 .layer(
                     TraceLayer::new_for_http()
                         .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
