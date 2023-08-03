@@ -1,6 +1,7 @@
 use hyper::server::conn::AddrStream;
 use std::{
     future::Future,
+    net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::{ready, Context, Poll},
@@ -81,14 +82,13 @@ where
         );
 
         info!(
-            "creating a new limited connection for {addr}, {n}/{max} remaining",
-            addr = req.remote_addr(),
-            n = self.sema.available_permits(),
-            max = self.max
+            addr = ?req.remote_addr(),
+            "creating a new limited connection",
         );
 
         ConnectionLimitFut {
             fut: self.inner.call(req),
+            addr: req.remote_addr(),
             max: self.max,
             permit,
         }
@@ -99,6 +99,7 @@ where
 pub struct ConnectionLimitFut<F> {
     #[pin]
     fut: F,
+    addr: SocketAddr,
     max: usize,
     permit: Option<OwnedSemaphorePermit>,
 }
@@ -112,12 +113,16 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         let rdy = ready!(this.fut.poll(cx));
-        Poll::Ready(rdy.map(|inner| ConnectionLimitedServiceWrapper { inner }))
+        Poll::Ready(rdy.map(|inner| ConnectionLimitedServiceWrapper {
+            inner,
+            addr: *this.addr,
+        }))
     }
 }
 
 pub struct ConnectionLimitedServiceWrapper<S> {
     inner: S,
+    addr: SocketAddr,
 }
 
 impl<S, I> Service<I> for ConnectionLimitedServiceWrapper<S>
@@ -139,6 +144,9 @@ where
 
 impl<S> Drop for ConnectionLimitedServiceWrapper<S> {
     fn drop(&mut self) {
-        info!("dropping connection service!",);
+        info!(
+            addr = ?self.addr,
+            "dropping connection limited service",
+        );
     }
 }

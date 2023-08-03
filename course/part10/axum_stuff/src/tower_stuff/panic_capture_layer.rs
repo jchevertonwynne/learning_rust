@@ -1,5 +1,4 @@
 use std::{
-    convert::Infallible,
     future::Future,
     pin::Pin,
     task::{Context, Poll},
@@ -28,7 +27,7 @@ pub struct PanicCaptureService<S> {
 
 impl<S, I> Service<I> for PanicCaptureService<S>
 where
-    S: Service<I, Response = Response, Error = Infallible>,
+    S: Service<I, Response = Response>,
 {
     type Response = S::Response;
     type Error = S::Error;
@@ -52,9 +51,9 @@ pub enum PanicCaptureFut<F> {
     Fut(#[pin] F),
 }
 
-impl<F> Future for PanicCaptureFut<F>
+impl<F, E> Future for PanicCaptureFut<F>
 where
-    F: Future<Output = Result<Response, Infallible>>,
+    F: Future<Output = Result<Response, E>>,
 {
     type Output = F::Output;
 

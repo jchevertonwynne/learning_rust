@@ -74,7 +74,9 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.project() {
             EveryOtherFutProjection::Failed => {
-                Poll::Ready(Ok(StatusCode::FORBIDDEN.into_response()))
+                Poll::Ready(Ok(
+                    (StatusCode::FORBIDDEN, "flopped to refuse").into_response()
+                ))
             }
             EveryOtherFutProjection::Fut(f) => f.poll(cx),
         }

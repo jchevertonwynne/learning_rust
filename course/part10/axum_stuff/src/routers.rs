@@ -60,17 +60,19 @@ where
                     (StatusCode::SERVICE_UNAVAILABLE, err.to_string())
                 }))
                 .layer(LoadShedLayer::new())
-                .layer(GlobalConcurrencyLimitLayer::new(100))
+                .layer(GlobalConcurrencyLimitLayer::new(1))
+                // .rate_limit(1, Duration::from_secs(1))
                 .layer(
                     TraceLayer::new_for_http()
                         .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
                         .on_response(|_response: &Response, duration: Duration, _span: &Span| {
-                            info!("request took {:?} to complete", duration);
+                            info!(duration=?duration, "request complete");
                         }),
                 ),
         )
         .with_state(Arc::new(AtomicUsize::default()))
 }
+
 fn numbers_subrouter<S, B>() -> Router<S, B>
 where
     S: Clone + Send + Sync + 'static,
@@ -128,8 +130,8 @@ where
 
 async fn hello(State(counter): State<Arc<AtomicUsize>>) -> Response {
     let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
-    info!("hello endpoint has been hit - {count}");
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    info!(count = count, "hello endpoint has been hit");
+    tokio::time::sleep(Duration::from_millis(5000)).await;
     "hello world".into_response()
 }
 

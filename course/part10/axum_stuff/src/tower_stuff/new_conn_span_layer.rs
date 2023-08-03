@@ -44,10 +44,6 @@ where
     }
 
     fn call(&mut self, req: &'a AddrStream) -> Self::Future {
-        debug!(
-            "SERVICE CALL: creating a new connection to {addr}",
-            addr = req.remote_addr()
-        );
         let span = info_span!("connection", addr=?req.remote_addr());
         NewConnSpanFut {
             span,
@@ -72,9 +68,7 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         let _entered = this.span.enter();
-        debug!("SERVICE FUTURE: polling to create a new service...");
         let rdy = ready!(this.fut.poll(cx));
-        debug!("SERVICE FUTURE: created a new connection");
         Poll::Ready(rdy.map(|inner| SpannedService {
             span: this.span.clone(),
             inner,

@@ -43,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
                 let resp = compression_client.call(request).await?;
 
                 if !resp.status().is_success() {
-                    info!("hit a bad response: {code}", code = resp.status());
+                    info!(code = ?resp.status(), "hit a bad response");
                 }
 
                 debug!("response headers = {headers:?}", headers = resp.headers());
