@@ -18,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
             // tower::ServiceBuilder::new()
             // .load_shed()
             // .rate_limit(1, std::time::Duration::from_secs(1))
-            // .layer(axum_stuff::tower_stuff::ConnectionLimitLayer::new(10))
+            // .layer(axum_stuff::tower_stuff::ConnectionLimitLayer::new(100))
             // .layer(axum_stuff::tower_stuff::NewConnSpanMakeServiceLayer)
             // .service(main_router().into_make_service()),
         )

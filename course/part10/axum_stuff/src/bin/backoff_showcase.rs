@@ -19,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
             HttpPolicy {
                 allowed_retries: 20,
             },
-            ExponentialBackoffStrategy,
+            FibonacciBackoffStrategy,
         ))
         .service(
             Client::builder()

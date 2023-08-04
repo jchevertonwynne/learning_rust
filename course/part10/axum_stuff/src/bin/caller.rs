@@ -12,32 +12,22 @@ async fn main() -> anyhow::Result<()> {
 
     info!("hello!");
 
-    // let http_client = Client::builder().http2_only(true).build_http();
-    let http_client = Client::new();
+    let http_client = Client::builder().http2_only(true).build_http();
+    // let http_client = Client::new();
 
-    let compression_client = tower::service_fn(|mut request: Request<_>| async {
-        // request.headers_mut().insert(
-        //     http::header::CONNECTION,
-        //     HeaderValue::from_str("close").expect("was ascii string"),
-        // );
-        request.headers_mut().insert(
-            ACCEPT_ENCODING,
-            HeaderValue::from_str("gzip").expect("was ascii string"),
-        );
-        Decompression::new(&http_client).call(request).await
-    });
+    let compression_client = Decompression::new(&http_client);
 
     for i in 1..=2 {
         info!("start of run {i}");
         let mut futs = FuturesUnordered::new();
 
         for _ in 0..10 {
-            let mut compression_client = compression_client;
+            let mut compression_client = compression_client.clone();
 
             let fut = async move {
                 let request = Request::builder()
-                    // .uri("http://localhost:25565/decompression/please".parse::<Uri>()?)
-                    .uri("http://localhost:25565/hello".parse::<Uri>()?)
+                    .uri("http://localhost:25565/decompression/please".parse::<Uri>()?)
+                    // .uri("http://localhost:25565/hello".parse::<Uri>()?)
                     .body(Body::empty())?;
 
                 let resp = compression_client.call(request).await?;

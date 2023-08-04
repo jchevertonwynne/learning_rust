@@ -92,11 +92,11 @@ where
 
     fn call(&mut self, req: Backoff<Req>) -> Self::Future {
         let Backoff {
-            calls: repeats,
+            calls,
             req,
         } = req;
-        let backoff = self.backoff.backoff_duration(repeats);
-        let is_first_call = repeats == 0;
+        let backoff = self.backoff.backoff_duration(calls);
+        let is_first_call = calls == 0;
         if !is_first_call {
             info!("this call will backoff for {backoff:?}");
         }

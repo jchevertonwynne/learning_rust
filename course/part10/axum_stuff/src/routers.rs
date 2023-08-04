@@ -1,6 +1,6 @@
 use std::{
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicI16, AtomicUsize, Ordering},
         Arc,
     },
     time::Duration,
@@ -9,7 +9,7 @@ use std::{
 use axum::{
     body::HttpBody,
     error_handling::HandleErrorLayer,
-    extract::{Path, State},
+    extract::{MatchedPath, Path, State},
     http::{Request, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -18,6 +18,7 @@ use axum::{
     Router,
 };
 use axum_extra::routing::{RouterExt, TypedPath};
+use http::Uri;
 use serde::{Deserialize, Serialize};
 use tower::{
     limit::GlobalConcurrencyLimitLayer,
@@ -30,6 +31,8 @@ use tower_http::{
     trace::{DefaultMakeSpan, TraceLayer},
 };
 use tracing::{info, Span};
+
+use crate::tower_stuff::PanicCaptureLayer;
 
 pub fn main_router<S, B>() -> Router<S, B>
 where
@@ -60,7 +63,7 @@ where
                     (StatusCode::SERVICE_UNAVAILABLE, err.to_string())
                 }))
                 .layer(LoadShedLayer::new())
-                .layer(GlobalConcurrencyLimitLayer::new(10))
+                .layer(GlobalConcurrencyLimitLayer::new(100))
                 .layer(
                     TraceLayer::new_for_http()
                         .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
@@ -69,7 +72,7 @@ where
                         }),
                 ),
         )
-        .with_state(Arc::new(AtomicUsize::default()))
+        .with_state(Arc::new(AtomicI16::default()))
 }
 
 fn numbers_subrouter<S, B>() -> Router<S, B>
@@ -89,10 +92,7 @@ where
             format!("dynamic number: {number}")
         })
         // curl -v localhost:25565/numbers/divide -X GET --json '{"numerator": 13, "denominator": 5}'
-        .route(
-            "/divide",
-            get(divide).layer(tower_http::catch_panic::CatchPanicLayer::new()),
-        )
+        .route("/divide", get(divide).layer(PanicCaptureLayer::default()))
         // curl -v localhost:25565/numbers/divide2 -X GET --json '{"numerator": 13, "denominator": 5}'
         .route("/divide2", get(divide2))
     // .layer(EveryOtherRequestLayer::default())
@@ -115,19 +115,21 @@ where
         // curl -v localhost:25565/swap/please
         .route(
             "/:b",
-            get(|Path((a, b)): Path<(String, String)>| async move {
-                info!("hit the long url endpoint!");
-                format!(
-                    "if this url was 100 times longer and reversed: /{b}/{a}",
-                    b = b.repeat(100),
-                    a = a.repeat(100)
-                )
-            }),
+            get(
+                |Path((a, b)): Path<(String, String)>, matched_path: MatchedPath| async move {
+                    info!(matched_path=?matched_path, "hit the long url endpoint");
+                    format!(
+                        "if this url was 100 times longer and reversed: /{b}/{a}",
+                        b = b.repeat(100),
+                        a = a.repeat(100)
+                    )
+                },
+            ),
         )
         .layer(CompressionLayer::<DefaultPredicate>::default())
 }
 
-async fn hello(State(counter): State<Arc<AtomicUsize>>) -> Response {
+async fn hello(State(counter): State<Arc<AtomicI16>>) -> Response {
     let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
     info!(count = count, "hello endpoint has been hit");
     tokio::time::sleep(Duration::from_millis(5000)).await;
