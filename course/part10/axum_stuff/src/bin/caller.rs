@@ -1,7 +1,5 @@
-use axum::http::HeaderValue;
 use futures::{stream::FuturesUnordered, StreamExt};
 use hyper::{Body, Client, Request, Uri};
-use reqwest::header::ACCEPT_ENCODING;
 use tower::Service;
 use tower_http::decompression::Decompression;
 use tracing::{debug, info};

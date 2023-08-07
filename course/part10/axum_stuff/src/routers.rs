@@ -1,6 +1,6 @@
 use std::{
     sync::{
-        atomic::{AtomicBool, AtomicI16, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicI16, Ordering},
         Arc,
     },
     time::Duration,
@@ -18,7 +18,6 @@ use axum::{
     Router,
 };
 use axum_extra::routing::{RouterExt, TypedPath};
-use http::Uri;
 use serde::{Deserialize, Serialize};
 use tower::{
     limit::GlobalConcurrencyLimitLayer,

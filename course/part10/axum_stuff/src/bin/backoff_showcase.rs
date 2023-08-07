@@ -16,9 +16,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut http_service = ServiceBuilder::new()
         .layer(BackoffLayer::new(
-            HttpPolicy {
-                allowed_retries: 20,
-            },
+            HttpPolicy { allowed_retries: 5 },
             FibonacciBackoffStrategy,
         ))
         .service(
