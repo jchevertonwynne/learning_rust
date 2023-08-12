@@ -3,7 +3,11 @@
 // DECK_OF_CARDS_URL=http://localhost:25566 to use fake deck of cards api
 
 use futures::FutureExt;
+use hyper::Client as HyperClient;
+use mongodb::Client as MongoClient;
+use tonic::transport::Server;
 use tower::{limit::ConcurrencyLimitLayer, ServiceBuilder};
+use tower_http::trace::TraceLayer;
 use tracing::info;
 use url::Url;
 
@@ -15,7 +19,7 @@ use tracing_showcase::{
             JaegerPropagatedTracingContextConsumerLayer,
             JaegerPropagatedTracingContextProducerLayer,
         },
-        request_counter::{GrpcCheckRequest, RequestCounterLayer},
+        request_counter::RequestCounterLayer,
     },
     mongo::MongoRecordController,
     tracing_setup::init_tracing,
@@ -27,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
 
     info!("starting grpc server...");
 
-    let mongo_client = mongodb::Client::with_uri_str("mongodb://localhost:27017").await?;
+    let mongo_client = MongoClient::with_uri_str("mongodb://localhost:27017").await?;
     let record_controller = MongoRecordController::new(&mongo_client);
 
     info!("connected to mongo...");
@@ -35,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
     let client = ServiceBuilder::new()
         .layer(ConcurrencyLimitLayer::new(10))
         .layer(JaegerPropagatedTracingContextProducerLayer)
-        .service(hyper::Client::builder().http2_only(true).build_http());
+        .service(HyperClient::builder().http2_only(true).build_http());
     let url = Url::try_from(
         std::env::var("DECK_OF_CARDS_URL")
             .unwrap_or("https://deckofcardsapi.com".to_string())
@@ -51,12 +55,12 @@ async fn main() -> anyhow::Result<()> {
     info!("serving on {addr}");
 
     let shutdown = tokio::signal::ctrl_c().map(|_| ());
-    tonic::transport::Server::builder()
+    Server::builder()
         .layer(
             ServiceBuilder::new()
-                .layer(tower_http::trace::TraceLayer::new_for_grpc())
+                .layer(TraceLayer::new_for_grpc())
                 .layer(JaegerPropagatedTracingContextConsumerLayer::new())
-                .layer(RequestCounterLayer::new(GrpcCheckRequest::new())),
+                .layer(RequestCounterLayer::new_for_http()),
         )
         .add_service(CardsServiceServer::new(service))
         .serve_with_shutdown(addr, shutdown)

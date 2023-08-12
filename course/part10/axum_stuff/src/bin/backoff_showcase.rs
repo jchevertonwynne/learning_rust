@@ -1,4 +1,4 @@
-use std::future::Ready;
+use std::future::{ready, Ready};
 
 use bytes::Bytes;
 use futures::{stream::FuturesUnordered, StreamExt};
@@ -16,8 +16,8 @@ async fn main() -> anyhow::Result<()> {
 
     let mut http_service = ServiceBuilder::new()
         .layer(BackoffLayer::new(
-            HttpPolicy { allowed_retries: 5 },
-            FibonacciBackoffStrategy,
+            HttpPolicy::new(5),
+            ExponentialBackoffStrategy,
         ))
         .service(
             Client::builder()
@@ -45,6 +45,12 @@ struct HttpPolicy {
     allowed_retries: usize,
 }
 
+impl HttpPolicy {
+    fn new(allowed_retries: usize) -> Self {
+        Self { allowed_retries }
+    }
+}
+
 impl<Req, Res, Err> Policy<Request<Req>, Response<Res>, Err> for HttpPolicy
 where
     Req: Clone,
@@ -56,23 +62,15 @@ where
         _req: &Request<Req>,
         result: Result<&Response<Res>, &Err>,
     ) -> Option<Self::Future> {
-        if self.allowed_retries == 0 {
-            return None;
-        }
-        match result {
-            Ok(res) => {
-                if res.status() == StatusCode::SERVICE_UNAVAILABLE {
-                    Some(std::future::ready(HttpPolicy {
-                        allowed_retries: self.allowed_retries - 1,
-                    }))
-                } else {
-                    None
-                }
-            }
-            Err(_) => Some(std::future::ready(HttpPolicy {
-                allowed_retries: self.allowed_retries - 1,
-            })),
-        }
+        result
+            .ok()
+            .filter(|_| self.allowed_retries != 0)
+            .filter(|res| res.status() == StatusCode::SERVICE_UNAVAILABLE)
+            .map(|_| {
+                ready(HttpPolicy {
+                    allowed_retries: self.allowed_retries - 1,
+                })
+            })
     }
 
     fn clone_request(&self, req: &Request<Req>) -> Option<Request<Req>> {

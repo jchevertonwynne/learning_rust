@@ -21,8 +21,8 @@ pub struct BackoffLayer<P, B> {
 
 impl<P, B> BackoffLayer<P, B> {
     pub fn new(policy: P, backoff_strategy: B) -> Self {
-        BackoffLayer {
-            retry: RetryLayer::new(BackoffPolicy { inner: policy }),
+        Self {
+            retry: RetryLayer::new(BackoffPolicy::new(policy)),
             backoff: backoff_strategy,
         }
     }
@@ -36,18 +36,22 @@ where
     type Service = BackoffService<P, B, S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        BackoffService {
-            inner: self.retry.layer(BackoffInnerService {
-                inner,
-                backoff: self.backoff.clone(),
-            }),
-        }
+        BackoffService::new(
+            self.retry
+                .layer(BackoffInnerService::new(inner, self.backoff.clone())),
+        )
     }
 }
 
 #[derive(Clone)]
 pub struct BackoffService<P, B, Req> {
     inner: Retry<BackoffPolicy<P>, BackoffInnerService<Req, B>>,
+}
+
+impl<P, B, Req> BackoffService<P, B, Req> {
+    fn new(inner: Retry<BackoffPolicy<P>, BackoffInnerService<Req, B>>) -> Self {
+        Self { inner }
+    }
 }
 
 impl<P, B, S, Req> Service<Req> for BackoffService<P, B, S>
@@ -65,7 +69,7 @@ where
     }
 
     fn call(&mut self, req: Req) -> Self::Future {
-        self.inner.call(Backoff { calls: 0, req })
+        self.inner.call(Backoff::new(req))
     }
 }
 
@@ -73,6 +77,12 @@ where
 pub struct BackoffInnerService<S, B> {
     inner: S,
     backoff: B,
+}
+
+impl<S, B> BackoffInnerService<S, B> {
+    fn new(inner: S, backoff: B) -> Self {
+        Self { inner, backoff }
+    }
 }
 
 impl<S, B, Req> Service<Backoff<Req>> for BackoffInnerService<S, B>
@@ -95,11 +105,12 @@ where
         if !is_first_call {
             info!("this call will backoff for {backoff:?}");
         }
-        BackoffFut {
-            slept: is_first_call,
-            sleep: tokio::time::sleep(backoff),
-            fut: self.inner.call(req),
-        }
+
+        BackoffFut::new(
+            is_first_call,
+            tokio::time::sleep(backoff),
+            self.inner.call(req),
+        )
     }
 }
 
@@ -110,6 +121,12 @@ pub struct BackoffFut<F> {
     sleep: Sleep,
     #[pin]
     fut: F,
+}
+
+impl<F> BackoffFut<F> {
+    fn new(slept: bool, sleep: Sleep, fut: F) -> Self {
+        Self { slept, sleep, fut }
+    }
 }
 
 impl<F> Future for BackoffFut<F>
@@ -136,6 +153,12 @@ pub struct BackoffPolicy<P> {
     inner: P,
 }
 
+impl<P> BackoffPolicy<P> {
+    fn new(inner: P) -> Self {
+        Self { inner }
+    }
+}
+
 impl<P, Req, Res, Err> Policy<Backoff<Req>, Res, Err> for BackoffPolicy<P>
 where
     P: Policy<Req, Res, Err> + Clone,
@@ -151,16 +174,24 @@ where
 
     fn clone_request(&self, req: &Backoff<Req>) -> Option<Backoff<Req>> {
         let Backoff { calls, req } = req;
-        self.inner.clone_request(req).map(|req| Backoff {
-            calls: calls + 1,
-            req,
-        })
+        self.inner
+            .clone_request(req)
+            .map(|req| Backoff::new_with_calls(req, calls + 1))
     }
 }
 
 pub struct Backoff<R> {
     calls: u32,
     req: R,
+}
+
+impl<R> Backoff<R> {
+    fn new(req: R) -> Self {
+        Self { calls: 0, req }
+    }
+    fn new_with_calls(req: R, calls: u32) -> Self {
+        Self { calls, req }
+    }
 }
 
 trait BackoffStrategy: Clone {

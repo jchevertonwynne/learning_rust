@@ -19,27 +19,27 @@ pub trait SuccessChecker: Clone {
 }
 
 #[derive(Debug)]
-pub struct GrpcCheckRequest<I, O>(PhantomData<(I, O)>);
+pub struct GrpcChecker<I, O>(PhantomData<(I, O)>);
 
-impl<I, O> Clone for GrpcCheckRequest<I, O> {
+impl<I, O> Clone for GrpcChecker<I, O> {
     fn clone(&self) -> Self {
         Self::default()
     }
 }
 
-impl<I, O> Default for GrpcCheckRequest<I, O> {
+impl<I, O> Default for GrpcChecker<I, O> {
     fn default() -> Self {
         Self(PhantomData {})
     }
 }
 
-impl<I, O> GrpcCheckRequest<I, O> {
+impl<I, O> GrpcChecker<I, O> {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl<I, O> SuccessChecker for GrpcCheckRequest<I, O> {
+impl<I, O> SuccessChecker for GrpcChecker<I, O> {
     type Request = http::Request<I>;
     type Response = http::Response<O>;
 
@@ -102,6 +102,18 @@ impl<I, O> SuccessChecker for HttpChecker<I, O> {
 pub struct RequestCounterLayer<C> {
     request_checker: C,
     counter_inner: Arc<Mutex<RequestCounterInner>>,
+}
+
+impl<I, O> RequestCounterLayer<HttpChecker<I, O>> {
+    pub fn new_for_http() -> Self {
+        RequestCounterLayer::new(HttpChecker::new())
+    }
+}
+
+impl<I, O> RequestCounterLayer<GrpcChecker<I, O>> {
+    pub fn new_for_grpc() -> Self {
+        RequestCounterLayer::new(GrpcChecker::new())
+    }
 }
 
 #[derive(Debug, Default)]

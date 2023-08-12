@@ -5,7 +5,7 @@ use tracing_showcase::{
     grpc::proto::{cards_service_client::CardsServiceClient, DrawCardsRequest, NewDecksRequest},
     layers::{
         jaeger_context_propagation::JaegerPropagatedTracingContextProducerLayer,
-        request_counter::{GrpcCheckRequest, RequestCounterLayer},
+        request_counter::RequestCounterLayer,
     },
     tracing_setup::init_tracing,
 };
@@ -34,7 +34,7 @@ async fn run_client() -> anyhow::Result<()> {
         .layer(
             ServiceBuilder::new()
                 .layer(JaegerPropagatedTracingContextProducerLayer)
-                .layer(RequestCounterLayer::new(GrpcCheckRequest::new())),
+                .layer(RequestCounterLayer::new_for_http()),
         )
         .service(channel);
     let mut client = CardsServiceClient::new(client);

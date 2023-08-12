@@ -34,7 +34,7 @@ async fn main() -> anyhow::Result<()> {
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
                 .layer(JaegerPropagatedTracingContextConsumerLayer::new())
-                .layer(RequestCounterLayer::new(HttpChecker::new())),
+                .layer(RequestCounterLayer::new_for_http()),
         )
         .with_state(app_state);
 

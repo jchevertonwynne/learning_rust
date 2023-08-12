@@ -226,9 +226,7 @@ async fn worker<D: RabbitDelegator>(
             .properties
             .headers()
             .as_ref()
-            .unwrap()
-            .inner()
-            .get("message_type")
+            .and_then(|ft| ft.inner().get("message-type"))
             .and_then(|message_type| message_type.as_long_string())
             .map(|message_type| message_type.to_string())
         else {

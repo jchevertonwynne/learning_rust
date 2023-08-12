@@ -10,36 +10,32 @@ use axum::{
     body::HttpBody,
     error_handling::HandleErrorLayer,
     extract::{MatchedPath, Path, State},
+    handler::Handler,
     http::{Request, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, IntoMakeService},
     Json,
     Router,
 };
 use axum_extra::routing::{RouterExt, TypedPath};
 use serde::{Deserialize, Serialize};
 use tower::{
-    limit::GlobalConcurrencyLimitLayer,
+    limit::{ConcurrencyLimitLayer, GlobalConcurrencyLimitLayer},
     load_shed::LoadShedLayer,
     BoxError,
     ServiceBuilder,
 };
 use tower_http::{
     compression::{CompressionLayer, DefaultPredicate},
-    trace::{DefaultMakeSpan, TraceLayer},
+    trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
+    LatencyUnit,
 };
-use tracing::{info, Span};
+use tracing::info;
 
 use crate::tower_stuff::PanicCaptureLayer;
 
-pub fn main_router<S, B>() -> Router<S, B>
-where
-    S: Clone + Send + Sync + 'static,
-    B: HttpBody + Send + Sync + 'static,
-    <B as HttpBody>::Data: Send,
-    <B as HttpBody>::Error: std::error::Error + Send + Sync,
-{
+pub fn service() -> IntoMakeService<Router> {
     Router::new()
         // curl localhost:25565/hello
         .route(
@@ -62,16 +58,20 @@ where
                     (StatusCode::SERVICE_UNAVAILABLE, err.to_string())
                 }))
                 .layer(LoadShedLayer::new())
-                .layer(GlobalConcurrencyLimitLayer::new(100))
+                .layer(GlobalConcurrencyLimitLayer::new(100)) // across all connections
+                .layer(ConcurrencyLimitLayer::new(10)) // for a particular connection (aka http2 multiplex)
                 .layer(
                     TraceLayer::new_for_http()
                         .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
-                        .on_response(|_response: &Response, duration: Duration, _span: &Span| {
-                            info!(duration=?duration, "request complete");
-                        }),
+                        .on_response(
+                            DefaultOnResponse::new()
+                                .level(tracing::Level::INFO)
+                                .latency_unit(LatencyUnit::Micros),
+                        ),
                 ),
         )
         .with_state(Arc::new(AtomicI16::default()))
+        .into_make_service()
 }
 
 fn numbers_subrouter<S, B>() -> Router<S, B>
@@ -91,7 +91,7 @@ where
             format!("dynamic number: {number}")
         })
         // curl -v localhost:25565/numbers/divide -X GET --json '{"numerator": 13, "denominator": 5}'
-        .route("/divide", get(divide).layer(PanicCaptureLayer::default()))
+        .route("/divide", get(divide.layer(PanicCaptureLayer)))
         // curl -v localhost:25565/numbers/divide2 -X GET --json '{"numerator": 13, "denominator": 5}'
         .route("/divide2", get(divide2))
     // .layer(EveryOtherRequestLayer::default())
@@ -189,8 +189,10 @@ async fn divide2(
         denominator,
     }): Json<Numbers>,
 ) -> Result<Json<DivideResult>, DivideByZeroError> {
-    numerator
+    let res = numerator
         .checked_div(denominator)
         .map(|result| Json(DivideResult { result }))
-        .ok_or(DivideByZeroError)
+        .ok_or(DivideByZeroError)?;
+
+    Ok(res)
 }
