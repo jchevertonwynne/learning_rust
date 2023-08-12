@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use axum::{routing::get, Router};
 use futures::FutureExt;
 use tower::ServiceBuilder;
+use tower_http::trace::TraceLayer;
 use tracing::info;
 
 use tracing_showcase::{
@@ -31,6 +32,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/deck/:deck_id/draw/", get(endpoints::draw_cards))
         .layer(
             ServiceBuilder::new()
+                .layer(TraceLayer::new_for_http())
                 .layer(JaegerPropagatedTracingContextConsumerLayer::new())
                 .layer(RequestCounterLayer::new(HttpChecker::new())),
         )

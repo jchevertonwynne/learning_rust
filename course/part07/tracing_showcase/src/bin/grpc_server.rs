@@ -54,6 +54,7 @@ async fn main() -> anyhow::Result<()> {
     tonic::transport::Server::builder()
         .layer(
             ServiceBuilder::new()
+                .layer(tower_http::trace::TraceLayer::new_for_grpc())
                 .layer(JaegerPropagatedTracingContextConsumerLayer::new())
                 .layer(RequestCounterLayer::new(GrpcCheckRequest::new())),
         )
