@@ -3,7 +3,7 @@
 // DECK_OF_CARDS_URL=http://localhost:25566 to use fake deck of cards api
 
 use futures::FutureExt;
-use tower::ServiceBuilder;
+use tower::{limit::ConcurrencyLimitLayer, ServiceBuilder};
 use tracing::info;
 use url::Url;
 
@@ -33,6 +33,7 @@ async fn main() -> anyhow::Result<()> {
     info!("connected to mongo...");
 
     let client = ServiceBuilder::new()
+        .layer(ConcurrencyLimitLayer::new(10))
         .layer(JaegerPropagatedTracingContextProducerLayer)
         .service(hyper::Client::builder().http2_only(true).build_http());
     let url = Url::try_from(

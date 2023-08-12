@@ -1,7 +1,7 @@
 use futures::{StreamExt, TryStreamExt};
 use hyper::Body;
+use std::future::Future;
 
-use tonic::codegen::Service;
 use tracing::{info, instrument};
 
 use crate::{
@@ -11,24 +11,17 @@ use crate::{
     mongo::MongoRecordController,
 };
 
-pub struct CardsServiceState<C>
-where
-    C: Service<http::Request<Body>>,
-{
-    cards_client: DeckOfCardsClient<C>,
+pub struct CardsServiceState<F> {
+    cards_client: DeckOfCardsClient<F>,
     record_controller: MongoRecordController,
 }
 
-impl<C> CardsServiceState<C>
+impl<F> CardsServiceState<F>
 where
-    C: Service<http::Request<Body>, Response = http::Response<Body>, Error = hyper::Error>
-        + Send
-        + Sync
-        + 'static,
-    C::Future: Send,
+    F: Future<Output = Result<http::Response<Body>, hyper::Error>>,
 {
     pub(crate) fn new(
-        cards_client: DeckOfCardsClient<C>,
+        cards_client: DeckOfCardsClient<F>,
         record_controller: MongoRecordController,
     ) -> Self {
         Self {

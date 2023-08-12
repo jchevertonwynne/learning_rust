@@ -1,22 +1,18 @@
-use std::{borrow::Borrow, fmt::Debug, marker::PhantomData};
+use std::{borrow::Borrow, fmt::Debug, future::Future};
 
 use async_channel::{Receiver, Sender};
 use futures::StreamExt;
 use http::StatusCode;
-use hyper::Body;
+use hyper::{Body, Request};
 use serde::de::DeserializeOwned;
 use tower::{Service, ServiceExt};
 use url::Url;
 
 use crate::model::{DeckID, DeckInfo, DrawnCardsInfo};
 
-pub struct DeckOfCardsClient<C>
-where
-    C: Service<http::Request<Body>>,
-{
+pub struct DeckOfCardsClient<F> {
     base_url: Url,
-    tx: Sender<Msg<C::Future>>,
-    _pd: PhantomData<C>,
+    tx: Sender<Msg<F>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -35,10 +31,7 @@ pub enum ApiError {
 
 async fn service_loop<C>(mut client: C, mut rx: Receiver<Msg<C::Future>>) -> anyhow::Result<()>
 where
-    C: Service<hyper::Request<Body>, Response = hyper::Response<Body>, Error = hyper::Error>
-        + Send
-        + Sync
-        + 'static,
+    C: Service<Request<Body>, Error = hyper::Error>,
 {
     while let Some(msg) = rx.next().await {
         let Msg { span, req, tx } = msg;
@@ -46,7 +39,7 @@ where
         client.ready().await?;
         let f = client.call(req);
         tx.send(f)
-            .unwrap_or_else(|_| panic!("failed to send oneshot resposne"));
+            .unwrap_or_else(|_| panic!("failed to send oneshot response"));
     }
 
     Ok(())
@@ -54,28 +47,24 @@ where
 
 struct Msg<F> {
     span: tracing::Span,
-    req: hyper::Request<Body>,
+    req: Request<Body>,
     tx: tokio::sync::oneshot::Sender<F>,
 }
 
-impl<C> DeckOfCardsClient<C>
+impl<F> DeckOfCardsClient<F>
 where
-    C: Service<hyper::Request<Body>, Response = hyper::Response<Body>, Error = hyper::Error>
-        + Send
-        + Sync
-        + 'static,
-    C::Future: Send,
+    F: Future<Output = Result<http::Response<Body>, hyper::Error>>,
 {
-    pub fn new(mut base_url: Url, client: C) -> Self {
+    pub fn new<C>(mut base_url: Url, client: C) -> Self
+    where
+        C: Service<Request<Body>, Error = hyper::Error, Future = F> + Send + Sync + 'static,
+        C::Future: Send + Sync,
+    {
         let (tx, rx): (Sender<Msg<C::Future>>, _) = async_channel::bounded(32);
         tokio::spawn(service_loop(client, rx));
         base_url.set_path("");
         base_url.set_query(None);
-        Self {
-            base_url,
-            tx,
-            _pd: PhantomData,
-        }
+        Self { base_url, tx }
     }
 
     #[tracing::instrument(skip(self))]
@@ -84,7 +73,7 @@ where
         url.set_path("/api/deck/new/shuffle/");
         url.set_query(Some(&format!("deck_count={decks}")));
 
-        let req = hyper::Request::get(url.as_str())
+        let req = Request::get(url.as_str())
             .body(Body::empty())
             .map_err(ApiError::RequestBuildFailure)?;
 
@@ -97,7 +86,7 @@ where
         url.set_path(&format!("/api/deck/{deck_id}/draw/"));
         url.set_query(Some(&format!("count={n}")));
 
-        let req = hyper::Request::get(url.as_str())
+        let req = Request::get(url.as_str())
             .body(Body::empty())
             .map_err(ApiError::RequestBuildFailure)?;
 
@@ -106,14 +95,13 @@ where
 
     async fn send_and_parse_json<T: DeserializeOwned>(
         &self,
-        req: hyper::Request<Body>,
+        req: Request<Body>,
     ) -> Result<T, ApiError> {
         let span = tracing::Span::current();
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let msg = Msg { span, req, tx };
 
         self.tx
-            .send(msg)
+            .send(Msg { span, req, tx })
             .await
             .expect("actor should always be ready");
 

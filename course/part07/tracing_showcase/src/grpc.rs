@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use hyper::{service::Service, Body};
+use hyper::Body;
+use std::future::Future;
 
 use tracing::instrument;
 
@@ -13,23 +14,16 @@ pub mod proto {
     tonic::include_proto!("cards");
 }
 
-pub struct CardsService<C>
-where
-    C: Service<http::Request<Body>>,
-{
-    cards_service_internal: CardsServiceState<C>,
+pub struct CardsService<F> {
+    cards_service_internal: CardsServiceState<F>,
 }
 
-impl<C> CardsService<C>
+impl<F> CardsService<F>
 where
-    C: Service<http::Request<Body>, Response = http::Response<Body>, Error = hyper::Error>
-        + Send
-        + Sync
-        + 'static,
-    C::Future: Send,
+    F: Future<Output = Result<http::Response<Body>, hyper::Error>>,
 {
     pub fn new(
-        cards_client: DeckOfCardsClient<C>,
+        cards_client: DeckOfCardsClient<F>,
         record_controller: MongoRecordController,
     ) -> Self {
         Self {
@@ -39,13 +33,9 @@ where
 }
 
 #[async_trait]
-impl<C> proto::cards_service_server::CardsService for CardsService<C>
+impl<F> proto::cards_service_server::CardsService for CardsService<F>
 where
-    C: Service<http::Request<Body>, Response = http::Response<Body>, Error = hyper::Error>
-        + Send
-        + Sync
-        + 'static,
-    C::Future: Send,
+    F: Future<Output = Result<http::Response<Body>, hyper::Error>> + Sync + Send + 'static,
 {
     #[instrument(skip(self, request))]
     async fn new_decks(
