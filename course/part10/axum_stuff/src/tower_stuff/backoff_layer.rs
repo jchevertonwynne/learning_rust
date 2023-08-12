@@ -5,7 +5,6 @@ use std::{
     time::Duration,
 };
 
-use http::Request;
 use pin_project::pin_project;
 use tokio::time::Sleep;
 use tower::{
@@ -51,22 +50,21 @@ pub struct BackoffService<P, B, Req> {
     inner: Retry<BackoffPolicy<P>, BackoffInnerService<Req, B>>,
 }
 
-impl<P, B, S, Req> Service<Request<Req>> for BackoffService<P, B, S>
+impl<P, B, S, Req> Service<Req> for BackoffService<P, B, S>
 where
-    P: Policy<Request<Req>, S::Response, S::Error> + Clone,
+    P: Policy<Req, S::Response, S::Error> + Clone,
     B: BackoffStrategy,
-    S: Service<Request<Req>> + Clone,
+    S: Service<Req> + Clone,
 {
     type Response = S::Response;
     type Error = S::Error;
-    type Future =
-        ResponseFuture<BackoffPolicy<P>, BackoffInnerService<S, B>, Backoff<Request<Req>>>;
+    type Future = ResponseFuture<BackoffPolicy<P>, BackoffInnerService<S, B>, Backoff<Req>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: Request<Req>) -> Self::Future {
+    fn call(&mut self, req: Req) -> Self::Future {
         self.inner.call(Backoff { calls: 0, req })
     }
 }
