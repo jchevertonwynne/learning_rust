@@ -5,12 +5,11 @@ use std::{
     task::{Context, Poll},
 };
 
-use async_trait::async_trait;
 use fxhash::FxBuildHasher;
-use http::{HeaderMap, HeaderName, HeaderValue};
-use tonic::metadata::MetadataMap;
+use http::{HeaderName, HeaderValue};
+
 use tower::{Layer, Service};
-use tracing::{error, info_span, instrument::Instrumented, Instrument};
+use tracing::{error, info, info_span, instrument::Instrumented, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 #[derive(Debug, Clone, Default)]
@@ -18,7 +17,7 @@ pub struct JaegerPropagatedTracingContextConsumerLayer;
 
 impl JaegerPropagatedTracingContextConsumerLayer {
     pub fn new() -> Self {
-        JaegerPropagatedTracingContextConsumerLayer::default()
+        JaegerPropagatedTracingContextConsumerLayer
     }
 }
 
@@ -86,56 +85,63 @@ where
     }
 }
 
-fn inject_tracing_context(hd: &mut HeaderMap) {
-    std::thread_local! {
-        static PARENT_CTX_MAP: RefCell<HashMap<String, String, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
+#[derive(Debug, Clone, Default)]
+pub struct JaegerPropagatedTracingContextProducerLayer;
+
+impl<S> Layer<S> for JaegerPropagatedTracingContextProducerLayer {
+    type Service = JaegerPropagatedTracingContextProducerService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        JaegerPropagatedTracingContextProducerService { inner }
+    }
+}
+
+pub struct JaegerPropagatedTracingContextProducerService<S> {
+    inner: S,
+}
+
+impl<S, I> Service<http::Request<I>> for JaegerPropagatedTracingContextProducerService<S>
+where
+    S: Service<http::Request<I>>,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = S::Future;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
     }
 
-    PARENT_CTX_MAP.with(|parent_ctx_map| {
-        let mut parent_ctx_map = parent_ctx_map.borrow_mut();
-        parent_ctx_map.clear();
+    fn call(&mut self, mut req: http::Request<I>) -> Self::Future {
+        let hd = req.headers_mut();
 
-        let ctx = tracing::Span::current().context();
+        std::thread_local! {
+            static PARENT_CTX_MAP: RefCell<HashMap<String, String, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
+        }
 
-        opentelemetry::global::get_text_map_propagator(|propagator| {
-            propagator.inject_context(&ctx, parent_ctx_map.deref_mut());
+        PARENT_CTX_MAP.with(|parent_ctx_map| {
+            let mut parent_ctx_map = parent_ctx_map.borrow_mut();
+            parent_ctx_map.clear();
+
+            let ctx = tracing::Span::current().context();
+
+            opentelemetry::global::get_text_map_propagator(|propagator| {
+                propagator.inject_context(&ctx, parent_ctx_map.deref_mut());
+            });
+
+            info!("captured context = {:?}", parent_ctx_map);
+
+            for (k, v) in parent_ctx_map.drain() {
+                let Ok(k) = k.parse::<HeaderName>() else {
+                    continue;
+                };
+                let Ok(v) = v.parse::<HeaderValue>() else {
+                    continue;
+                };
+                hd.insert(k, v);
+            }
         });
 
-        for (k, v) in parent_ctx_map.drain() {
-            let Ok(k) = k.parse::<HeaderName>() else { continue };
-            let Ok(v) = v.parse::<HeaderValue>() else { continue };
-            hd.insert(k, v);
-        }
-    })
-}
-
-pub fn jaeger_tracing_context_propagator(
-    mut req: tonic::Request<()>,
-) -> Result<tonic::Request<()>, tonic::Status> {
-    let mut hd = std::mem::take(req.metadata_mut()).into_headers();
-    inject_tracing_context(&mut hd);
-    *req.metadata_mut() = MetadataMap::from_headers(hd);
-    Ok(req)
-}
-
-#[derive(Debug, Default)]
-pub struct JaegerContextPropagatorMiddleware;
-
-impl JaegerContextPropagatorMiddleware {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-#[async_trait]
-impl reqwest_middleware::Middleware for JaegerContextPropagatorMiddleware {
-    async fn handle(
-        &self,
-        mut req: reqwest::Request,
-        extensions: &'_ mut task_local_extensions::Extensions,
-        next: reqwest_middleware::Next<'_>,
-    ) -> reqwest_middleware::Result<reqwest::Response> {
-        inject_tracing_context(req.headers_mut());
-        next.run(req, extensions).await
+        self.inner.call(req)
     }
 }

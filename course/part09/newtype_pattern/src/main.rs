@@ -1,5 +1,4 @@
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::{cmp::Reverse, collections::BinaryHeap};
 
 fn main() {
     // rust uses the 'new type' pattern to modify type behaviour at compile time

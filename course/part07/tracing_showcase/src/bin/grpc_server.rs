@@ -12,8 +12,8 @@ use tracing_showcase::{
     grpc::{proto::cards_service_server::CardsServiceServer, CardsService},
     layers::{
         jaeger_context_propagation::{
-            JaegerContextPropagatorMiddleware,
             JaegerPropagatedTracingContextConsumerLayer,
+            JaegerPropagatedTracingContextProducerLayer,
         },
         request_counter::{GrpcCheckRequest, RequestCounterLayer},
     },
@@ -32,14 +32,15 @@ async fn main() -> anyhow::Result<()> {
 
     info!("connected to mongo...");
 
-    let client = reqwest_middleware::ClientBuilder::new(reqwest::ClientBuilder::default().build()?)
-        .with(JaegerContextPropagatorMiddleware::new())
-        .build();
+    let client = ServiceBuilder::new()
+        .layer(JaegerPropagatedTracingContextProducerLayer)
+        .service(hyper::Client::builder().http2_only(true).build_http());
     let url = Url::try_from(
         std::env::var("DECK_OF_CARDS_URL")
             .unwrap_or("https://deckofcardsapi.com".to_string())
             .as_str(),
     )?;
+    info!("deck of cards url = {url:?}");
     let cards_client = DeckOfCardsClient::new(url, client);
 
     let service = CardsService::new(cards_client, record_controller);

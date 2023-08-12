@@ -1,11 +1,13 @@
 #![allow(dead_code)]
 
-use nom::branch::alt;
-use nom::bytes::complete::tag;
-use nom::combinator::{all_consuming, map};
-use nom::multi::separated_list0;
-use nom::sequence::{delimited, tuple};
-use nom::IResult;
+use nom::{
+    branch::alt,
+    bytes::complete::tag,
+    combinator::{all_consuming, map},
+    multi::separated_list0,
+    sequence::{delimited, tuple},
+    IResult,
+};
 use std::fmt::{Debug, Formatter};
 
 fn main() -> anyhow::Result<()> {

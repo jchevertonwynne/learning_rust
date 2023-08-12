@@ -1,8 +1,10 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use std::cmp::min;
-use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
-use std::hint::black_box;
+use std::{
+    cmp::min,
+    collections::HashSet,
+    hash::{Hash, Hasher},
+    hint::black_box,
+};
 
 fn bench_options(c: &mut Criterion) {
     //the Container new type is a string wrapper that limits the Hash implementation

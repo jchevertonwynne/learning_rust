@@ -1,8 +1,7 @@
 #![allow(dead_code, unused_imports)]
 
-use std::fmt::Formatter;
 use std::{
-    fmt::{Debug, Display},
+    fmt::{Debug, Display, Formatter},
     future::Future,
     pin::pin,
     sync::Arc,
@@ -185,7 +184,10 @@ impl<'de> serde::Deserialize<'de> for DeckID {
                     };
 
                     let Ok(byte) = c.try_into() else {
-                        return Err(serde::de::Error::invalid_value(serde::de::Unexpected::Char(c), &self));
+                        return Err(serde::de::Error::invalid_value(
+                            serde::de::Unexpected::Char(c),
+                            &self,
+                        ));
                     };
 
                     *b = byte;

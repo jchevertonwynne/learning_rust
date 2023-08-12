@@ -101,7 +101,7 @@ pub struct ConnectionLimitFut<F> {
     fut: F,
     addr: SocketAddr,
     max: usize,
-    permit: Option<OwnedSemaphorePermit>
+    permit: Option<OwnedSemaphorePermit>,
 }
 
 impl<F, T, E> Future for ConnectionLimitFut<F>
@@ -116,7 +116,7 @@ where
         Poll::Ready(rdy.map(|inner| ConnectionLimitedServiceWrapper {
             inner,
             addr: *this.addr,
-            _permit: this.permit.take()
+            _permit: this.permit.take(),
         }))
     }
 }
@@ -124,7 +124,7 @@ where
 pub struct ConnectionLimitedServiceWrapper<S> {
     inner: S,
     addr: SocketAddr,
-    _permit: Option<OwnedSemaphorePermit>
+    _permit: Option<OwnedSemaphorePermit>,
 }
 
 impl<S, I> Service<I> for ConnectionLimitedServiceWrapper<S>

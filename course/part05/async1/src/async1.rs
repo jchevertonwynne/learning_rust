@@ -10,8 +10,7 @@ async fn hello_world() {
     println!("hello world!");
 }
 
-use std::pin::Pin;
-use std::task::Context;
+use std::{pin::Pin, task::Context};
 
 // keeps producing Pending until it's Ready
 trait Future {

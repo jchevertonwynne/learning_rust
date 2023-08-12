@@ -41,7 +41,9 @@ async fn main() -> anyhow::Result<()> {
         info!(" got resp {resp:?}");
 
         Ok::<(), anyhow::Error>(())
-    }.instrument(span).await?;
+    }
+    .instrument(span)
+    .await?;
 
     info!("goodbye from redis!");
 

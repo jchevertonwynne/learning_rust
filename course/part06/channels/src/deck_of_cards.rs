@@ -113,7 +113,10 @@ impl<'de> serde::Deserialize<'de> for DeckID {
                     };
 
                     let Ok(byte) = c.try_into() else {
-                        return Err(serde::de::Error::invalid_value(serde::de::Unexpected::Char(c), &self));
+                        return Err(serde::de::Error::invalid_value(
+                            serde::de::Unexpected::Char(c),
+                            &self,
+                        ));
                     };
 
                     *b = byte;

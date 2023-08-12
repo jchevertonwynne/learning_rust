@@ -1,21 +1,34 @@
 use futures::{StreamExt, TryStreamExt};
+use hyper::Body;
+
+use tonic::codegen::Service;
 use tracing::{info, instrument};
 
 use crate::{
-    deck_of_cards::DeckOfCardsClient,
+    deck_of_cards::{ApiError, DeckOfCardsClient},
     grpc::proto,
     model::{DeckID, DeckInfo, DrawnCardsInfo},
     mongo::MongoRecordController,
 };
 
-pub struct CardsServiceState {
-    cards_client: DeckOfCardsClient,
+pub struct CardsServiceState<C>
+where
+    C: Service<http::Request<Body>>,
+{
+    cards_client: DeckOfCardsClient<C>,
     record_controller: MongoRecordController,
 }
 
-impl CardsServiceState {
+impl<C> CardsServiceState<C>
+where
+    C: Service<http::Request<Body>, Response = http::Response<Body>, Error = hyper::Error>
+        + Send
+        + Sync
+        + 'static,
+    C::Future: Send,
+{
     pub(crate) fn new(
-        cards_client: DeckOfCardsClient,
+        cards_client: DeckOfCardsClient<C>,
         record_controller: MongoRecordController,
     ) -> Self {
         Self {
@@ -70,7 +83,7 @@ impl CardsServiceState {
         deck_id: DeckID,
         hands: usize,
         count: u8,
-    ) -> Result<Vec<DrawnCardsInfo>, reqwest_middleware::Error> {
+    ) -> Result<Vec<DrawnCardsInfo>, ApiError> {
         // (0..hands)
         //     .map(|_| self.cards_client.draw_cards(deck_id, count))
         //     .collect::<FuturesUnordered<_>>()
@@ -84,7 +97,7 @@ impl CardsServiceState {
 #[derive(Debug, thiserror::Error)]
 pub enum NewDeckError {
     #[error("failed to draw deck: {0}")]
-    ReqwestError(#[from] reqwest_middleware::Error),
+    ReqwestError(#[from] ApiError),
     #[error("failed to update mongo: {0}")]
     MongoError(#[from] mongodb::error::Error),
 }
@@ -92,7 +105,7 @@ pub enum NewDeckError {
 #[derive(Debug, thiserror::Error)]
 pub enum DrawCardsError {
     #[error("failed to draw cards: {0}")]
-    ReqwestError(#[from] reqwest_middleware::Error),
+    ReqwestError(#[from] ApiError),
     #[error("failed to update mongo: {0}")]
     MongoError(#[from] mongodb::error::Error),
 }

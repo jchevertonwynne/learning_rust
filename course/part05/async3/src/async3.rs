@@ -2,9 +2,12 @@
 
 // the tokio::main macro
 
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::{future::Future, time::Duration};
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+    time::Duration,
+};
 
 #[tokio::main]
 // #[tokio::main(flavor = "current_thread")]
