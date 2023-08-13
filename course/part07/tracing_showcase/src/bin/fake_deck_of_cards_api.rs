@@ -3,15 +3,15 @@ use std::net::SocketAddr;
 use axum::{routing::get, Router};
 use futures::FutureExt;
 use tower::ServiceBuilder;
-use tower_http::trace::TraceLayer;
-use tracing::info;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
+use tracing::{info, Level};
 
 use tracing_showcase::{
     endpoints,
     fake_deck_of_cards_api_state::FakeDeckOfCardsAPIState,
     layers::{
         jaeger_context_propagation::JaegerPropagatedTracingContextConsumerLayer,
-        request_counter::{HttpChecker, RequestCounterLayer},
+        request_counter::RequestCounterLayer,
     },
     tracing_setup::init_tracing,
 };
@@ -32,7 +32,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/deck/:deck_id/draw/", get(endpoints::draw_cards))
         .layer(
             ServiceBuilder::new()
-                .layer(TraceLayer::new_for_http())
+                .layer(
+                    TraceLayer::new_for_http()
+                        .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                        .on_response(DefaultOnResponse::new().level(Level::INFO)),
+                )
                 .layer(JaegerPropagatedTracingContextConsumerLayer::new())
                 .layer(RequestCounterLayer::new_for_http()),
         )

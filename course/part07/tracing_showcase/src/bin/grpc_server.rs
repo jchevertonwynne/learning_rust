@@ -7,8 +7,8 @@ use hyper::Client as HyperClient;
 use mongodb::Client as MongoClient;
 use tonic::transport::Server;
 use tower::{limit::ConcurrencyLimitLayer, ServiceBuilder};
-use tower_http::trace::TraceLayer;
-use tracing::info;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
+use tracing::{info, Level};
 use url::Url;
 
 use tracing_showcase::{
@@ -58,9 +58,13 @@ async fn main() -> anyhow::Result<()> {
     Server::builder()
         .layer(
             ServiceBuilder::new()
-                .layer(TraceLayer::new_for_grpc())
+                .layer(
+                    TraceLayer::new_for_grpc()
+                        .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                        .on_response(DefaultOnResponse::new().level(Level::INFO)),
+                )
                 .layer(JaegerPropagatedTracingContextConsumerLayer::new())
-                .layer(RequestCounterLayer::new_for_http()),
+                .layer(RequestCounterLayer::new_for_grpc()),
         )
         .add_service(CardsServiceServer::new(service))
         .serve_with_shutdown(addr, shutdown)
