@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use axum::body::HttpBody;
 use hyper::Body;
 use std::future::Future;
 
@@ -18,9 +19,11 @@ pub struct CardsService<F> {
     cards_service_internal: CardsServiceState<F>,
 }
 
-impl<F> CardsService<F>
+impl<F, B> CardsService<F>
 where
-    F: Future<Output = Result<http::Response<Body>, hyper::Error>>,
+    F: Future<Output = Result<http::Response<B>, hyper::Error>>,
+    B: HttpBody,
+    B::Error: std::error::Error,
 {
     pub fn new(
         cards_client: DeckOfCardsClient<F>,

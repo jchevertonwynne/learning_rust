@@ -7,7 +7,10 @@ use hyper::Client as HyperClient;
 use mongodb::Client as MongoClient;
 use tonic::transport::Server;
 use tower::{limit::ConcurrencyLimitLayer, ServiceBuilder};
-use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
+use tower_http::{
+    decompression::DecompressionLayer,
+    trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
+};
 use tracing::{info, Level};
 use url::Url;
 
@@ -38,6 +41,7 @@ async fn main() -> anyhow::Result<()> {
 
     let client = ServiceBuilder::new()
         .layer(ConcurrencyLimitLayer::new(10))
+        .layer(DecompressionLayer::new())
         .layer(JaegerPropagatedTracingContextProducerLayer)
         .service(HyperClient::builder().http2_only(true).build_http());
     let url = Url::try_from(

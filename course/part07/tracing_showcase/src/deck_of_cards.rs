@@ -3,7 +3,7 @@ use std::{borrow::Borrow, fmt::Debug, future::Future};
 use async_channel::{Receiver, Sender};
 use futures::StreamExt;
 use http::StatusCode;
-use hyper::{Body, Request};
+use hyper::{body::HttpBody, Body, Request};
 use serde::de::DeserializeOwned;
 use tower::{Service, ServiceExt};
 use url::Url;
@@ -24,7 +24,7 @@ pub enum ApiError {
     #[error("got a non-200 status code: {0}")]
     FailedRequestError(StatusCode),
     #[error("failed to read response body: {0}")]
-    FailedToReadBody(hyper::Error),
+    FailedToReadBody(anyhow::Error),
     #[error("failed to parse response body to json: {0}")]
     JsonError(#[from] serde_json::Error),
 }
@@ -51,14 +51,17 @@ struct Msg<F> {
     tx: tokio::sync::oneshot::Sender<F>,
 }
 
-impl<F> DeckOfCardsClient<F>
+impl<F, B> DeckOfCardsClient<F>
 where
-    F: Future<Output = Result<http::Response<Body>, hyper::Error>>,
+    F: Future<Output = Result<http::Response<B>, hyper::Error>>,
+    B: HttpBody,
+    B::Error: std::error::Error,
 {
     pub fn new<C>(mut base_url: Url, client: C) -> Self
     where
         C: Service<Request<Body>, Error = hyper::Error, Future = F> + Send + Sync + 'static,
         C::Future: Send + Sync,
+        B: Send + Sync + 'static,
     {
         let (tx, rx): (Sender<Msg<C::Future>>, _) = async_channel::bounded(32);
         tokio::spawn(service_loop(client, rx));
@@ -119,7 +122,7 @@ where
 
         let bytes = hyper::body::to_bytes(body)
             .await
-            .map_err(ApiError::FailedToReadBody)?;
+            .map_err(|err| ApiError::FailedToReadBody(anyhow::anyhow!("{err}")))?;
 
         let res = serde_json::from_slice(bytes.borrow())?;
 

@@ -1,5 +1,5 @@
+use axum::body::HttpBody;
 use futures::{StreamExt, TryStreamExt};
-use hyper::Body;
 use std::future::Future;
 
 use tracing::{info, instrument};
@@ -16,9 +16,11 @@ pub struct CardsServiceState<F> {
     record_controller: MongoRecordController,
 }
 
-impl<F> CardsServiceState<F>
+impl<F, B> CardsServiceState<F>
 where
-    F: Future<Output = Result<http::Response<Body>, hyper::Error>>,
+    F: Future<Output = Result<http::Response<B>, hyper::Error>>,
+    B: HttpBody,
+    B::Error: std::error::Error,
 {
     pub(crate) fn new(
         cards_client: DeckOfCardsClient<F>,
