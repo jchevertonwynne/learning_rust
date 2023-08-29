@@ -1,5 +1,6 @@
 use futures::{stream::FuturesUnordered, StreamExt};
 use hyper::{Body, Client, Request, Uri};
+use std::time::Duration;
 use tower::Service;
 use tower_http::decompression::Decompression;
 use tracing::{debug, info};
@@ -10,13 +11,14 @@ async fn main() -> anyhow::Result<()> {
 
     info!("hello!");
 
-    let http_client = Client::builder().http2_only(true).build_http();
-    // let http_client = Client::new();
+    // let http_client = Client::builder().http2_only(true).build_http();
 
-    let compression_client = Decompression::new(&http_client);
+    for i in 1.. {
+        let http_client = Client::new();
+        let compression_client = Decompression::new(&http_client);
 
-    for i in 1..=2 {
         info!("start of run {i}");
+
         let mut futs = FuturesUnordered::new();
 
         for _ in 0..10 {
@@ -24,8 +26,8 @@ async fn main() -> anyhow::Result<()> {
 
             let fut = async move {
                 let request = Request::builder()
-                    .uri("http://localhost:25565/decompression/please".parse::<Uri>()?)
-                    // .uri("http://localhost:25565/hello".parse::<Uri>()?)
+                    // .uri("http://localhost:25565/decompression/please".parse::<Uri>()?)
+                    .uri("http://localhost:25565/endpoint".parse::<Uri>()?)
                     .body(Body::empty())?;
 
                 let resp = compression_client.call(request).await?;
@@ -53,6 +55,8 @@ async fn main() -> anyhow::Result<()> {
         }
 
         info!("end of run {i}");
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
     info!("goodbye!");

@@ -1,3 +1,4 @@
+use std::time::Duration;
 use tracing::{info, level_filters::LevelFilter};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry};
 
@@ -21,47 +22,51 @@ async fn main() -> anyhow::Result<()> {
 
     let rabbit = Rabbit::new("amqp://localhost:5672").await?;
 
-    rabbit
-        .publish_json(
-            EXCHANGE,
-            MESSAGE_TYPE,
-            MyMessage {
-                age: 25,
-                name: "joseph".into(),
-            },
-        )
-        .await?;
+    for _ in 0.. {
+        rabbit
+            .publish_json(
+                EXCHANGE,
+                MESSAGE_TYPE,
+                MyMessage {
+                    age: 25,
+                    name: "joseph".into(),
+                },
+            )
+            .await?;
 
-    rabbit
-        .publish_json(
-            EXCHANGE,
-            MESSAGE_TYPE,
-            MyMessage {
-                age: 25,
-                name: "\newline encoded".into(),
-            },
-        )
-        .await?;
+        rabbit
+            .publish_json(
+                EXCHANGE,
+                MESSAGE_TYPE,
+                MyMessage {
+                    age: 25,
+                    name: "\newline encoded".into(),
+                },
+            )
+            .await?;
 
-    rabbit
-        .publish_json(
-            EXCHANGE,
-            MESSAGE_TYPE_2,
-            OtherMessage {
-                school_age: SchoolAge::Primary,
-                pupils: vec![
-                    Pupil {
-                        first_name: "jason".to_string(),
-                        second_name: "mccullough".to_string(),
-                    },
-                    Pupil {
-                        first_name: "david".to_string(),
-                        second_name: "petran".to_string(),
-                    },
-                ],
-            },
-        )
-        .await?;
+        rabbit
+            .publish_json(
+                EXCHANGE,
+                MESSAGE_TYPE_2,
+                OtherMessage {
+                    school_age: SchoolAge::Primary,
+                    pupils: vec![
+                        Pupil {
+                            first_name: "jason".to_string(),
+                            second_name: "mccullough".to_string(),
+                        },
+                        Pupil {
+                            first_name: "david".to_string(),
+                            second_name: "petran".to_string(),
+                        },
+                    ],
+                },
+            )
+            .await?;
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
 
     rabbit.close().await?;
 

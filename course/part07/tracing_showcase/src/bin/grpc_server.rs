@@ -5,6 +5,7 @@
 use futures::FutureExt;
 use hyper::Client as HyperClient;
 use mongodb::Client as MongoClient;
+use std::time::Duration;
 use tonic::transport::Server;
 use tower::{limit::ConcurrencyLimitLayer, ServiceBuilder};
 use tower_http::{
@@ -40,6 +41,7 @@ async fn main() -> anyhow::Result<()> {
     info!("connected to mongo...");
 
     let client = ServiceBuilder::new()
+        .rate_limit(10, Duration::from_secs(10))
         .layer(ConcurrencyLimitLayer::new(10))
         .layer(DecompressionLayer::new())
         .layer(JaegerPropagatedTracingContextProducerLayer)

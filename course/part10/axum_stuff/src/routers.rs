@@ -19,24 +19,26 @@ use axum::{
     Router,
 };
 use axum_extra::routing::{RouterExt, TypedPath};
+use rabbit_stuff::{
+    impls::{MyMessage, OtherMessage, Pupil, SchoolAge},
+    rabbit::{PublishError, Rabbit, EXCHANGE, MESSAGE_TYPE, MESSAGE_TYPE_2},
+};
 use serde::{Deserialize, Serialize};
 use tower::{
-    limit::{ConcurrencyLimitLayer, GlobalConcurrencyLimitLayer},
+    limit::GlobalConcurrencyLimitLayer,
     load_shed::LoadShedLayer,
     BoxError,
     ServiceBuilder,
 };
-use tower_http::{
-    compression::{CompressionLayer, DefaultPredicate},
-    trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
-    LatencyUnit,
-};
+use tower_http::compression::{CompressionLayer, DefaultPredicate};
 use tracing::info;
 
 use crate::tower_stuff::PanicCaptureLayer;
 
-pub fn service() -> IntoMakeService<Router> {
+pub fn service(rabbit: Rabbit) -> IntoMakeService<Router> {
     Router::new()
+        .route("/endpoint", get(endpoint))
+        .with_state(Arc::new(rabbit))
         // curl localhost:25565/hello
         .route(
             "/hello",
@@ -58,17 +60,7 @@ pub fn service() -> IntoMakeService<Router> {
                     (StatusCode::SERVICE_UNAVAILABLE, err.to_string())
                 }))
                 .layer(LoadShedLayer::new())
-                .layer(GlobalConcurrencyLimitLayer::new(100)) // across all connections
-                .layer(ConcurrencyLimitLayer::new(10)) // for a particular connection (aka http2 multiplex)
-                .layer(
-                    TraceLayer::new_for_http()
-                        .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
-                        .on_response(
-                            DefaultOnResponse::new()
-                                .level(tracing::Level::INFO)
-                                .latency_unit(LatencyUnit::Micros),
-                        ),
-                ),
+                .layer(GlobalConcurrencyLimitLayer::new(54321)), // across all connections
         )
         .with_state(Arc::new(AtomicI16::default()))
         .into_make_service()
@@ -131,8 +123,78 @@ where
 async fn hello(State(counter): State<Arc<AtomicI16>>) -> Response {
     let count = counter.fetch_add(1, Ordering::Relaxed) + 1;
     info!(count = count, "hello endpoint has been hit");
-    tokio::time::sleep(Duration::from_millis(5000)).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
     "hello world".into_response()
+}
+
+#[derive(Debug, thiserror::Error)]
+enum EndpointError {
+    #[error("failed to publish rabbit msg: {0}")]
+    Publish(#[from] PublishError),
+}
+
+impl IntoResponse for EndpointError {
+    fn into_response(self) -> Response {
+        match self {
+            EndpointError::Publish(err) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
+            }
+        }
+    }
+}
+
+async fn endpoint(State(rabbit): State<Arc<Rabbit>>) -> Result<(), EndpointError> {
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    rabbit
+        .publish_json(
+            EXCHANGE,
+            MESSAGE_TYPE,
+            MyMessage {
+                age: 25,
+                name: "joseph".into(),
+            },
+        )
+        .await?;
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    rabbit
+        .publish_json(
+            EXCHANGE,
+            MESSAGE_TYPE,
+            MyMessage {
+                age: 25,
+                name: "\newline encoded".into(),
+            },
+        )
+        .await?;
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    rabbit
+        .publish_json(
+            EXCHANGE,
+            MESSAGE_TYPE_2,
+            OtherMessage {
+                school_age: SchoolAge::Primary,
+                pupils: vec![
+                    Pupil {
+                        first_name: "jason".to_string(),
+                        second_name: "mccullough".to_string(),
+                    },
+                    Pupil {
+                        first_name: "david".to_string(),
+                        second_name: "petran".to_string(),
+                    },
+                ],
+            },
+        )
+        .await?;
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    Ok(())
 }
 
 async fn world() -> impl IntoResponse {

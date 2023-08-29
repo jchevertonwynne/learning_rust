@@ -7,7 +7,7 @@ use std::{
 use hyper::server::conn::AddrStream;
 use pin_project::pin_project;
 use tower::{Layer, Service};
-use tracing::{debug, info_span, Span};
+use tracing::{debug, debug_span, Span};
 
 #[derive(Debug)]
 pub struct NewConnSpanMakeServiceLayer;
@@ -44,7 +44,7 @@ where
     }
 
     fn call(&mut self, req: &'a AddrStream) -> Self::Future {
-        let span = info_span!("connection", addr=?req.remote_addr());
+        let span = debug_span!("connection", addr=?req.remote_addr());
         NewConnSpanFut {
             span,
             fut: self.inner.call(req),

@@ -226,10 +226,23 @@ async fn worker<D: RabbitDelegator>(
             .properties
             .headers()
             .as_ref()
-            .and_then(|ft| ft.inner().get("message-type"))
+            .and_then(|ft| ft.inner().get("message_type"))
             .and_then(|message_type| message_type.as_long_string())
             .map(|message_type| message_type.to_string())
         else {
+            info!("unable to extract message_type header for {delivery:?}");
+            if let Err(err) = channel
+                .basic_nack(
+                    delivery.delivery_tag,
+                    BasicNackOptions {
+                        requeue: false,
+                        ..Default::default()
+                    },
+                )
+                .await
+            {
+                error!("failed to nack msg: {}", err);
+            }
             continue;
         };
 
@@ -260,7 +273,7 @@ async fn worker<D: RabbitDelegator>(
                 }
                 Err(err) => {
                     let requeue = err.should_requeue().into();
-                    error!("failed to delegate message: {err} - requeue = {requeue}");
+                    error!("failed to delegate message {header}: {err} - requeue = {requeue}");
                     if let Err(err) = channel
                         .basic_nack(
                             delivery_tag,

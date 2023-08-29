@@ -10,9 +10,9 @@ use hyper::{
     Request,
 };
 use serde::de::DeserializeOwned;
-use tokio::task::JoinHandle;
+use tokio::{sync::oneshot, task::JoinHandle};
 use tower::{Service, ServiceExt};
-use tracing::Instrument;
+use tracing::{info_span, Instrument};
 use url::Url;
 
 use crate::model::{DeckID, DeckInfo, DrawnCardsInfo};
@@ -25,7 +25,7 @@ pub struct DeckOfCardsClient {
 struct PerformRequestMsg {
     span: tracing::Span,
     req: Request<Body>,
-    tx: tokio::sync::oneshot::Sender<JoinHandle<Result<http::Response<Bytes>, ApiError>>>,
+    tx: oneshot::Sender<JoinHandle<Result<http::Response<Bytes>, ApiError>>>,
 }
 
 impl DeckOfCardsClient {
@@ -77,7 +77,7 @@ impl DeckOfCardsClient {
         req: Request<Body>,
     ) -> Result<T, ApiError> {
         let span = tracing::Span::current();
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = oneshot::channel();
 
         self.tx
             .send(PerformRequestMsg { span, req, tx })
@@ -121,7 +121,10 @@ where
         let req = client.call(req);
         let handle = tokio::spawn(
             async move {
-                let resp = req.await.map_err(ApiError::RequestFailed)?;
+                let resp = req
+                    .instrument(info_span!("performing request"))
+                    .await
+                    .map_err(ApiError::RequestFailed)?;
 
                 let (parts, body) = resp.into_parts();
 
@@ -130,6 +133,7 @@ where
                 }
 
                 let bytes = hyper::body::to_bytes(body)
+                    .instrument(info_span!("reading response body"))
                     .await
                     .map_err(|err| ApiError::FailedToReadBody(err.into()))?;
 
@@ -149,7 +153,7 @@ pub enum ApiError {
     #[error("failed to build request: {0}")]
     RequestBuildFailure(http::Error),
     #[error("failed to recv response: {0}")]
-    Recv(tokio::sync::oneshot::error::RecvError),
+    Recv(oneshot::error::RecvError),
     #[error("tokio task panicked: {0}")]
     TaskPanic(tokio::task::JoinError),
     #[error("failed to perform request: {0}")]

@@ -4,6 +4,7 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
+    time::Duration,
 };
 
 use async_trait::async_trait;
@@ -141,6 +142,9 @@ impl RabbitConsumer for OtherMessageConsumer {
         info!("got message #{msgs_received}: {msg:?} - total processed = {total_msgs_received}");
 
         let mut pupils = self.pupils.lock().await;
+
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
         pupils.extend(msg.pupils);
 
         info!("there are a total {} pupils", pupils.len());

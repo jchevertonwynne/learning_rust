@@ -15,15 +15,11 @@ use tracing::info;
 
 pub struct ConnectionLimitLayer {
     max: usize,
-    sema: PollSemaphore,
 }
 
 impl ConnectionLimitLayer {
     pub fn new(max: usize) -> Self {
-        Self {
-            max,
-            sema: PollSemaphore::new(Arc::new(Semaphore::new(max))),
-        }
+        Self { max }
     }
 }
 
@@ -33,8 +29,7 @@ impl<S> Layer<S> for ConnectionLimitLayer {
     fn layer(&self, inner: S) -> Self::Service {
         ConnectionLimitService {
             inner,
-            max: self.max,
-            sema: self.sema.clone(),
+            sema: PollSemaphore::new(Arc::new(Semaphore::new(self.max))),
             permit: None,
         }
     }
@@ -42,7 +37,6 @@ impl<S> Layer<S> for ConnectionLimitLayer {
 
 pub struct ConnectionLimitService<S> {
     inner: S,
-    max: usize,
     sema: PollSemaphore,
     permit: Option<OwnedSemaphorePermit>,
 }
@@ -76,20 +70,16 @@ where
     fn call(&mut self, req: &'a AddrStream) -> Self::Future {
         let permit = self.permit.take();
 
-        debug_assert!(
-            permit.is_some(),
-            "permit should be set by the time we hit ConnectionLimitService::call"
-        );
+        debug_assert!(permit.is_some(), "call should always have a permit");
 
         info!(
-            addr = ?req.remote_addr(),
+            addr = ?req.remote_addr(), available = self.sema.available_permits(),
             "creating a new limited connection",
         );
 
         ConnectionLimitFut {
             fut: self.inner.call(req),
             addr: req.remote_addr(),
-            max: self.max,
             permit,
         }
     }
@@ -100,7 +90,6 @@ pub struct ConnectionLimitFut<F> {
     #[pin]
     fut: F,
     addr: SocketAddr,
-    max: usize,
     permit: Option<OwnedSemaphorePermit>,
 }
 
@@ -116,7 +105,7 @@ where
         Poll::Ready(rdy.map(|inner| ConnectionLimitedServiceWrapper {
             inner,
             addr: *this.addr,
-            _permit: this.permit.take(),
+            _permit: this.permit.take().expect("should always have a permit"),
         }))
     }
 }
@@ -124,7 +113,7 @@ where
 pub struct ConnectionLimitedServiceWrapper<S> {
     inner: S,
     addr: SocketAddr,
-    _permit: Option<OwnedSemaphorePermit>,
+    _permit: OwnedSemaphorePermit,
 }
 
 impl<S, I> Service<I> for ConnectionLimitedServiceWrapper<S>
