@@ -37,7 +37,6 @@ pub struct JaegerPropagatedTracingContextConsumerService<S> {
 impl<S, I, O> Service<http::Request<I>> for JaegerPropagatedTracingContextConsumerService<S>
 where
     S: Service<http::Request<I>, Response = O>,
-    O: Default,
 {
     type Response = S::Response;
     type Error = S::Error;

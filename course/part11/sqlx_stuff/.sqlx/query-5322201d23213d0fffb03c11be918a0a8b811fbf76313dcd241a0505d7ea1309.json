@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT * FROM USERS",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "age",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "favourite_food",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "favourite_programming_language",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "5322201d23213d0fffb03c11be918a0a8b811fbf76313dcd241a0505d7ea1309"
+}
