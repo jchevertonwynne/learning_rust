@@ -1,3 +1,4 @@
+use pin_project::pin_project;
 use std::{
     convert::Infallible,
     future::Future,
@@ -5,6 +6,7 @@ use std::{
     task::{ready, Context, Poll},
     time::Duration,
 };
+use tokio::time::Instant;
 use tower::Service;
 
 #[tokio::main]
@@ -67,9 +69,6 @@ where
         }
     }
 }
-
-use pin_project::pin_project;
-use tokio::time::Instant;
 
 #[pin_project]
 struct AddOneAndDoubleResponseFut<F> {
