@@ -40,11 +40,12 @@ async fn main() -> anyhow::Result<()> {
     let mut result = query.fetch(&pool);
     while let Some(row) = result.try_next().await? {
         println!(
-            "{row:?} {id} {name} {age} {favourite_food}",
+            "{row:?} {id} {name} {age} {favourite_food}, {favourite_pl}",
             id = row.user_id,
             name = row.name,
             age = row.age,
-            favourite_food = row.favourite_food.as_deref().unwrap_or("no food")
+            favourite_food = row.favourite_food.as_deref().unwrap_or("no food"),
+            favourite_pl = row.favourite_programming_language.as_deref().unwrap_or("html")
         );
     }
 
