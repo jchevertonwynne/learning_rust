@@ -149,7 +149,7 @@ mod tests {
 
         let new_deck_response = deck_client.new_deck(1).await;
         assert!(
-            matches!(new_deck_response, Err(_)),
+            new_deck_response.is_err(),
             "expected an error for a non-200 response code"
         );
 
