@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
             ServiceBuilder::new()
                 .load_shed()
                 .rate_limit(87654321, Duration::from_secs(1))
-                .layer(ConnectionLimitLayer::new(12345678))
+                .layer(ConnectionLimitLayer::new(5))
                 .layer(NewConnSpanMakeServiceLayer)
                 .service(service(rabbit)),
         )

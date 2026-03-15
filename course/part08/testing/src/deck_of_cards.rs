@@ -137,9 +137,7 @@ mod tests {
         wiremock::Mock::given(matchers::method("GET"))
             .and(matchers::path("/api/deck/new/shuffle/"))
             .and(matchers::query_param("deck_count", "1"))
-            .respond_with(
-                ResponseTemplate::new(StatusCode::BAD_REQUEST).set_body_json(deck_info.clone()),
-            )
+            .respond_with(ResponseTemplate::new(StatusCode::BAD_REQUEST).set_body_json(deck_info))
             .mount(&mock_server)
             .await;
 
@@ -149,7 +147,7 @@ mod tests {
 
         let new_deck_response = deck_client.new_deck(1).await;
         assert!(
-            matches!(new_deck_response, Err(_)),
+            new_deck_response.is_err(),
             "expected an error for a non-200 response code"
         );
 
