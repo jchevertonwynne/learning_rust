@@ -1,5 +1,7 @@
 use async_trait::async_trait;
 
+use futures::TryFutureExt;
+use opentelemetry::global;
 use tracing::instrument;
 
 use crate::{
@@ -37,8 +39,14 @@ impl proto::cards_service_server::CardsService for CardsService {
         let new_decks_response = self
             .cards_service_internal
             .new_deck(new_decks_request)
-            .await
-            .map_err(|err| tonic::Status::internal(err.to_string()))?;
+            .map_err(|err| tonic::Status::internal(err.to_string()))
+            .await?;
+
+        let meter = global::meter("cards_service");
+        meter
+            .u64_counter("cards_service.decks_created")
+            .init()
+            .add(1, &[]);
 
         Ok(tonic::Response::new(new_decks_response.into()))
     }
@@ -54,8 +62,15 @@ impl proto::cards_service_server::CardsService for CardsService {
         let hands = self
             .cards_service_internal
             .draw_cards(draw_cards_request)
-            .await
-            .map_err(|err| tonic::Status::internal(err.to_string()))?;
+            .map_err(|err| tonic::Status::internal(err.to_string()))
+            .await?;
+
+        let count: usize = hands.hands.iter().map(|h| h.cards.len()).sum();
+        let meter = global::meter("cards_service");
+        meter
+            .u64_counter("cards_service.cards_drawn")
+            .init()
+            .add(count as u64, &[]);
 
         Ok(tonic::Response::new(hands.into()))
     }

@@ -6,16 +6,19 @@ use axum::{
 use http::StatusCode;
 use rand::prelude::SliceRandom;
 use serde::{Deserialize, Serialize};
-use std::{str::FromStr, time::Duration};
 use strum::IntoEnumIterator;
-use tracing::{info, instrument};
+use tracing::{info, info_span, instrument, Instrument};
 use url::Url;
+
+use opentelemetry::global;
 
 use crate::{
     fake_deck_of_cards_api_state::FakeDeckOfCardsAPIState,
     model::{Card, Code, DeckID, DeckInfo, DrawnCardsInfo, Images, Suit, Value},
     mongo::RemoveCardsError,
 };
+
+const DECK_IMAGE_URL: &str = "https://smartbear.com/";
 
 #[instrument(skip(app_state))]
 pub async fn new_decks(
@@ -26,19 +29,44 @@ pub async fn new_decks(
 
     info!("created a new deck id");
 
-    app_state.new_deck(deck_id).await?;
+    let meter = global::meter("deck_of_cards_api");
+    meter
+        .u64_counter("deck_of_cards.decks_created")
+        .init()
+        .add(1, &[]);
+
+    app_state
+        .new_deck(deck_id)
+        .instrument(info_span!("mongo_new_deck", %deck_id))
+        .await?;
 
     info!("inserted into mongo");
 
-    let mut cards = vec![];
-    for _ in 0..query.deck_count.unwrap_or(1) {
-        cards.append(&mut generate_deck_of_cards());
-    }
-    cards.shuffle(&mut rand::thread_rng());
+    let count = query.deck_count.unwrap_or(1);
+    let cards = {
+        let base_image_url = Url::parse(DECK_IMAGE_URL).expect("hardcoded url should be valid");
+        let _span = info_span!("generate_cards", deck_count = count).entered();
+
+        let mut cards = Vec::with_capacity(count * 52);
+        for _ in 0..count {
+            append_new_deck(&mut cards, &base_image_url);
+        }
+
+        {
+            let _span = info_span!("shuffle_cards").entered();
+            cards.shuffle(&mut rand::thread_rng());
+        }
+
+        cards
+    };
 
     let remaining = cards.len();
+    let cards_len = cards.len();
 
-    app_state.update_cards(deck_id, cards).await?;
+    app_state
+        .update_cards(deck_id, cards)
+        .instrument(info_span!("mongo_update_cards", %deck_id, cards = cards_len))
+        .await?;
 
     info!("updated mongo");
 
@@ -77,9 +105,16 @@ pub async fn draw_cards(
     Query(query): Query<DrawCardsQuery>,
     app_state: State<FakeDeckOfCardsAPIState>,
 ) -> Result<Json<DrawnCardsInfo>, DrawCardsError> {
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let cards = app_state
+        .remove_n_cards(deck_id, query.count)
+        .instrument(info_span!("mongo_remove_cards", %deck_id, n = query.count))
+        .await?;
 
-    let cards = app_state.remove_n_cards(deck_id, query.count).await?;
+    let meter = global::meter("deck_of_cards_api");
+    meter
+        .u64_counter("deck_of_cards.cards_drawn")
+        .init()
+        .add(cards.len() as u64, &[]);
 
     Ok(Json(DrawnCardsInfo {
         success: true,
@@ -121,17 +156,14 @@ impl axum::response::IntoResponse for DrawCardsError {
     }
 }
 
-fn generate_deck_of_cards() -> Vec<Card> {
-    let mut cards = Vec::with_capacity(52);
-
-    let image = Url::from_str("https://smartbear.com/").expect("should be a valid url");
+fn append_new_deck(cards: &mut Vec<Card>, base_image: &Url) {
     let image_svg = {
-        let mut image_svg = image.clone();
+        let mut image_svg = base_image.clone();
         image_svg.set_path("/svg");
         image_svg
     };
     let image_png = {
-        let mut image_png = image.clone();
+        let mut image_png = base_image.clone();
         image_png.set_path("/png");
         image_png
     };
@@ -140,7 +172,7 @@ fn generate_deck_of_cards() -> Vec<Card> {
         for value in Value::iter() {
             cards.push(Card {
                 code: Code { value, suit },
-                image: image.clone(),
+                image: base_image.clone(),
                 images: Images {
                     svg: image_svg.clone(),
                     png: image_png.clone(),
@@ -150,6 +182,4 @@ fn generate_deck_of_cards() -> Vec<Card> {
             })
         }
     }
-
-    cards
 }

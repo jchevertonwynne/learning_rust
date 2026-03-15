@@ -2,10 +2,18 @@ use std::{
     future::Future,
     marker::PhantomData,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicI64, Ordering},
+        Arc, Mutex,
+    },
     task::{ready, Context, Poll},
+    time::Instant,
 };
 
+use opentelemetry::{
+    global,
+    metrics::{Counter, Histogram, ObservableUpDownCounter},
+};
 use pin_project::pin_project;
 use tower::{Layer, Service};
 use tracing::info;
@@ -116,10 +124,42 @@ impl<I, O> RequestCounterLayer<GrpcChecker<I, O>> {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct RequestCounterInner {
     counter: usize,
     counter_success: usize,
+    active_requests: Arc<AtomicI64>,
+    metric_requests: Counter<u64>,
+    metric_success: Counter<u64>,
+    _metric_active_requests: ObservableUpDownCounter<i64>,
+    metric_duration_seconds: Histogram<f64>,
+}
+
+impl Default for RequestCounterInner {
+    fn default() -> Self {
+        let meter = global::meter("request_counter");
+        let active_requests = Arc::new(AtomicI64::new(0));
+
+        let active_requests_clone = active_requests.clone();
+        let _metric_active_requests = meter
+            .i64_observable_up_down_counter("request_counter.active_requests")
+            .with_callback(move |observer| {
+                observer.observe(active_requests_clone.load(Ordering::Relaxed), &[]);
+            })
+            .init();
+
+        Self {
+            counter: 0,
+            counter_success: 0,
+            active_requests,
+            metric_requests: meter.u64_counter("request_counter.requests").init(),
+            metric_success: meter.u64_counter("request_counter.successes").init(),
+            _metric_active_requests,
+            metric_duration_seconds: meter
+                .f64_histogram("request_counter.duration_seconds")
+                .init(),
+        }
+    }
 }
 
 impl<C> RequestCounterLayer<C> {
@@ -168,9 +208,18 @@ where
 
     fn call(&mut self, req: I) -> Self::Future {
         if self.req_res_checker.should_monitor_response(&req) {
+            let counters = self.counter_inner.lock().unwrap();
+            counters.active_requests.fetch_add(1, Ordering::Relaxed);
+            let guard = ActiveRequestGuard {
+                active_requests: counters.active_requests.clone(),
+            };
+            drop(counters);
+
             RequestCounterFut::Monitored {
                 req_res_checker: self.req_res_checker.clone(),
                 counter_inner: self.counter_inner.clone(),
+                guard,
+                start_time: Instant::now(),
                 fut: self.inner.call(req),
             }
         } else {
@@ -179,11 +228,24 @@ where
     }
 }
 
+#[derive(Debug)]
+pub struct ActiveRequestGuard {
+    active_requests: Arc<AtomicI64>,
+}
+
+impl Drop for ActiveRequestGuard {
+    fn drop(&mut self) {
+        self.active_requests.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 #[pin_project(project = RequestCounterFutProj)]
 pub enum RequestCounterFut<C, F> {
     Monitored {
         req_res_checker: C,
         counter_inner: Arc<Mutex<RequestCounterInner>>,
+        guard: ActiveRequestGuard,
+        start_time: Instant,
         #[pin]
         fut: F,
     },
@@ -203,15 +265,23 @@ where
             RequestCounterFutProj::Monitored {
                 req_res_checker,
                 counter_inner,
+                guard: _,
+                start_time,
                 fut,
             } => {
                 let rdy = ready!(fut.poll(cx));
                 let mut counters = counter_inner.lock().unwrap();
+
+                let duration = start_time.elapsed().as_secs_f64();
+                counters.metric_duration_seconds.record(duration, &[]);
+
                 counters.counter += 1;
+                counters.metric_requests.add(1, &[]);
 
                 if let Ok(resp) = rdy.as_ref() {
                     if req_res_checker.is_successful_response(resp) {
                         counters.counter_success += 1;
+                        counters.metric_success.add(1, &[]);
                     }
                 }
 

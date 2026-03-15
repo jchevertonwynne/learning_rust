@@ -2,15 +2,15 @@ use std::{borrow::Borrow, fmt::Debug};
 
 use async_channel::{Receiver, Sender};
 use axum::BoxError;
-use futures::StreamExt;
+use futures::{StreamExt, TryFutureExt};
 use http::StatusCode;
 use hyper::{
     body::{Bytes, HttpBody},
-    Body,
-    Request,
+    Body, Request,
 };
 use serde::de::DeserializeOwned;
 use tokio::{sync::oneshot, task::JoinHandle};
+use tokio_util::task::TaskTracker;
 use tower::{Service, ServiceExt};
 use tracing::{info_span, Instrument};
 use url::Url;
@@ -85,10 +85,10 @@ impl DeckOfCardsClient {
             .expect("actor should always be able to receive messages");
 
         let body = rx
-            .await
-            .map_err(ApiError::Recv)?
-            .await
-            .map_err(ApiError::TaskPanic)??
+            .map_err(ApiError::Recv)
+            .await?
+            .map_err(ApiError::TaskPanic)
+            .await??
             .into_body();
 
         let res = serde_json::from_slice(body.borrow())?;
@@ -108,6 +108,7 @@ where
     Res::Data: Send,
     Res::Error: Into<BoxError>,
 {
+    let tracker = TaskTracker::new();
     loop {
         client
             .ready()
@@ -118,32 +119,36 @@ where
 
         let PerformRequestMsg { span, req, tx } = msg;
 
-        let req = client.call(req);
-        let handle = tokio::spawn(
-            async move {
-                let resp = req
-                    .instrument(info_span!("performing request"))
-                    .await
-                    .map_err(ApiError::RequestFailed)?;
+        // IMPORTANT: `OtlpPropagatedTracingContextProducerLayer` injects headers based on
+        // `tracing::Span::current()` at the moment `call()` is invoked.
+        // Ensure we invoke `call()` while the originating span is the current span.
+        let call_fut = span.in_scope(|| client.call(req)).instrument(span);
 
-                let (parts, body) = resp.into_parts();
+        let handle = tracker.spawn(async move {
+            let resp = call_fut
+                .instrument(info_span!("performing request"))
+                .await
+                .map_err(ApiError::RequestFailed)?;
 
-                if !parts.status.is_success() {
-                    return Err(ApiError::BadStatusCode(parts.status));
-                }
+            let (parts, body) = resp.into_parts();
 
-                let bytes = hyper::body::to_bytes(body)
-                    .instrument(info_span!("reading response body"))
-                    .await
-                    .map_err(|err| ApiError::FailedToReadBody(err.into()))?;
-
-                Ok(http::Response::from_parts(parts, bytes))
+            if !parts.status.is_success() {
+                return Err(ApiError::BadStatusCode(parts.status));
             }
-            .instrument(span),
-        );
+
+            let bytes = hyper::body::to_bytes(body)
+                .instrument(info_span!("reading response body"))
+                .await
+                .map_err(|err| ApiError::FailedToReadBody(err.into()))?;
+
+            Ok(http::Response::from_parts(parts, bytes))
+        });
         tx.send(handle)
             .unwrap_or_else(|_| panic!("failed to send oneshot response"));
     }
+
+    tracker.close();
+    tracker.wait().await;
 
     Ok(())
 }

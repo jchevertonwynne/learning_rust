@@ -154,7 +154,7 @@ pub struct DrawCardsRequest {
 
 #[derive(Debug)]
 pub struct DrawCardsResponse {
-    hands: Vec<DrawnCardsInfo>,
+    pub hands: Vec<DrawnCardsInfo>,
 }
 
 impl From<DrawCardsResponse> for proto::DrawCardsResponse {

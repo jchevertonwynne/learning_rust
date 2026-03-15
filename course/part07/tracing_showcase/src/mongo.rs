@@ -35,16 +35,7 @@ impl MongoRecordController {
     }
 
     #[instrument(skip(self))]
-    pub async fn get_deck_info(&self, deck_id: DeckID) -> Result<DeckEntry, mongodb::error::Error> {
-        let cursor = self
-            .entries
-            .find(doc! { "deck_id": deck_id.to_string() }, None)
-            .await?;
-        let found = cursor.deserialize_current()?;
-        Ok(found)
-    }
 
-    #[instrument(skip(self))]
     pub async fn new_deck(&self, deck_id: DeckID) -> Result<(), mongodb::error::Error> {
         let deck_entry = DeckEntry {
             deck_id,

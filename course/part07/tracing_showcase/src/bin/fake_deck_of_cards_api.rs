@@ -10,7 +10,7 @@ use tracing_showcase::{
     endpoints,
     fake_deck_of_cards_api_state::FakeDeckOfCardsAPIState,
     layers::{
-        jaeger_context_propagation::JaegerPropagatedTracingContextConsumerLayer,
+        otlp_context_propagation::OtlpPropagatedTracingContextConsumerLayer,
         request_counter::RequestCounterLayer,
     },
     tracing_setup::init_tracing,
@@ -22,7 +22,8 @@ async fn main() -> anyhow::Result<()> {
 
     info!("hello!");
 
-    let mongo_client = mongodb::Client::with_uri_str("mongodb://localhost:27017").await?;
+    let mongo_uri = std::env::var("MONGO_URI").unwrap_or_else(|_| "mongodb://localhost:27017".to_string());
+    let mongo_client = mongodb::Client::with_uri_str(mongo_uri).await?;
     let app_state = FakeDeckOfCardsAPIState::new(&mongo_client);
 
     info!("connected to mongo...");
@@ -37,14 +38,18 @@ async fn main() -> anyhow::Result<()> {
                         .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
                         .on_response(DefaultOnResponse::new().level(Level::INFO)),
                 )
-                .layer(JaegerPropagatedTracingContextConsumerLayer::new())
+                .layer(OtlpPropagatedTracingContextConsumerLayer::new())
                 .layer(RequestCounterLayer::new_for_http()),
         )
         .with_state(app_state);
 
     let shutdown = tokio::signal::ctrl_c().map(|_| ());
 
-    let addr: SocketAddr = ([127, 0, 0, 1], 25566).into();
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(25566);
+    let addr: SocketAddr = ([0, 0, 0, 0], port).into();
     info!("serving on {addr}");
 
     let server = axum::Server::from_tcp(std::net::TcpListener::bind(addr)?)?

@@ -1,0 +1,116 @@
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+    ports:
+      - "5775:5775/udp"
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+      - "5778:5778"
+      - "16686:16686"
+      - "14268:14268"
+      - "14250:14250"
+      - "9410:9411"
+
+  grpc_server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: grpc_server
+    ports:
+      - "25565:25565"
+    environment:
+      - DECK_OF_CARDS_URL=http://fake_deck_of_cards_api:25566
+      - RUST_LOG=info
+      - PORT=25565
+      - MONGO_URI=mongodb://mongo:27017
+      - REDIS_URI=redis://redis:6379
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4317
+    depends_on:
+      - mongo
+      - redis
+      - jaeger
+      - otel-lgtm
+
+  fake_deck_of_cards_api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: fake_deck_of_cards_api
+    ports:
+      - "25566:25566"
+    environment:
+      - MONGO_URI=mongodb://mongo:27017
+      - PORT=25566
+      - RUST_LOG=info
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4317
+    depends_on:
+      - mongo
+      - jaeger
+      - otel-lgtm
+
+  grpc_client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: grpc_client
+    environment:
+      - GRPC_SERVER_URL=http://grpc_server:25565
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4317
+      - RUST_LOG=info
+    depends_on:
+      - grpc_server
+      - jaeger
+    profiles: ["tools"]
+
+  otel-lgtm:
+    image: grafana/otel-lgtm:latest
+    ports:
+      - "3000:3000"   # Grafana UI
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "9090:9090"   # Prometheus
+      - "3100:3100"   # Loki
+      - "9411:9411"   # Zipkin
+      - "8080:8080"   # Tempo
+      - "8081:8081"   # Tempo
+      - "8082:8082"   # Tempo
+      - "8083:8083"   # Tempo
+      - "8084:8084"   # Tempo
+      - "8085:8085"   # Tempo
+      - "8086:8086"   # Tempo
+      - "8087:8087"   # Tempo
+      - "8088:8088"   # Tempo
+      - "8089:8089"   # Tempo
+      - "9091:9091"   # Prometheus
+      - "9092:9092"   # Prometheus
+      - "9093:9093"   # Prometheus
+      - "9094:9094"   # Prometheus
+      - "9095:9095"   # Prometheus
+      - "9096:9096"   # Prometheus
+      - "9097:9097"   # Prometheus
+      - "9098:9098"   # Prometheus
+      - "9099:9099"   # Prometheus
+    environment:
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=otel-lgtm
+
+volumes:
+  mongo_data:
+  redis_data:

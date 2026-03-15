@@ -7,28 +7,28 @@ use tracing::{info_span, instrument::Instrumented, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 #[derive(Debug, Clone, Default)]
-pub struct JaegerPropagatedTracingContextConsumerLayer;
+pub struct OtlpPropagatedTracingContextConsumerLayer;
 
-impl JaegerPropagatedTracingContextConsumerLayer {
+impl OtlpPropagatedTracingContextConsumerLayer {
     pub fn new() -> Self {
-        JaegerPropagatedTracingContextConsumerLayer
+        OtlpPropagatedTracingContextConsumerLayer
     }
 }
 
-impl<S> Layer<S> for JaegerPropagatedTracingContextConsumerLayer {
-    type Service = JaegerPropagatedTracingContextConsumerService<S>;
+impl<S> Layer<S> for OtlpPropagatedTracingContextConsumerLayer {
+    type Service = OtlpPropagatedTracingContextConsumerService<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        JaegerPropagatedTracingContextConsumerService { inner }
+        OtlpPropagatedTracingContextConsumerService { inner }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct JaegerPropagatedTracingContextConsumerService<S> {
+pub struct OtlpPropagatedTracingContextConsumerService<S> {
     inner: S,
 }
 
-impl<S, I, O> Service<http::Request<I>> for JaegerPropagatedTracingContextConsumerService<S>
+impl<S, I, O> Service<http::Request<I>> for OtlpPropagatedTracingContextConsumerService<S>
 where
     S: Service<http::Request<I>, Response = O>,
 {
@@ -42,7 +42,7 @@ where
 
     fn call(&mut self, req: http::Request<I>) -> Self::Future {
         let parent_ctx = opentelemetry::global::get_text_map_propagator(|propagator| {
-            propagator.extract(&opentelemetry_http::HeaderExtractor(&req.headers()))
+            propagator.extract(&opentelemetry_http::HeaderExtractor(req.headers()))
         });
         let span = info_span!("handling a request", uri = %req.uri());
         span.set_parent(parent_ctx);
@@ -51,21 +51,21 @@ where
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct JaegerPropagatedTracingContextProducerLayer;
+pub struct OtlpPropagatedTracingContextProducerLayer;
 
-impl<S> Layer<S> for JaegerPropagatedTracingContextProducerLayer {
-    type Service = JaegerPropagatedTracingContextProducerService<S>;
+impl<S> Layer<S> for OtlpPropagatedTracingContextProducerLayer {
+    type Service = OtlpPropagatedTracingContextProducerService<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        JaegerPropagatedTracingContextProducerService { inner }
+        OtlpPropagatedTracingContextProducerService { inner }
     }
 }
 
-pub struct JaegerPropagatedTracingContextProducerService<S> {
+pub struct OtlpPropagatedTracingContextProducerService<S> {
     inner: S,
 }
 
-impl<S, I> Service<http::Request<I>> for JaegerPropagatedTracingContextProducerService<S>
+impl<S, I> Service<http::Request<I>> for OtlpPropagatedTracingContextProducerService<S>
 where
     S: Service<http::Request<I>>,
 {
