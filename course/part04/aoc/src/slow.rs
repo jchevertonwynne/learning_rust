@@ -19,7 +19,7 @@ impl BagItem {
             .map(|part| part.to_string())
             .collect::<Vec<_>>();
 
-        let bag_count = parts.get(0).unwrap().parse().unwrap();
+        let bag_count = parts.first().unwrap().parse().unwrap();
         let bag_color_first = parts.get(1).unwrap().clone();
         let bag_color_second = parts.get(2).unwrap().clone();
         let bag_color = format!("{bag_color_first} {bag_color_second}");
@@ -46,7 +46,7 @@ impl BagRule {
             .map(|part| part.to_string())
             .collect();
 
-        let bag_color = parts.get(0).unwrap().clone();
+        let bag_color = parts.first().unwrap().clone();
         let bag_contents_string = parts.get(1).unwrap().clone();
 
         // Remove dot from the end
